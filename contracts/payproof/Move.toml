@@ -1,0 +1,7 @@
+[package]
+name = "payproof"
+edition = "2024"
+license = "Apache-2.0"
+authors = ["PayProof Contributors"]
+
+[dependencies]

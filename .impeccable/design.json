@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-31T01:45:00+08:00",
+  "title": "Design System: PayProof",
+  "extensions": {
+    "colorMeta": {
+      "marine-cobalt": { "role": "primary", "displayName": "Marine Cobalt", "canonical": "oklch(0.48 0.105 230)", "tonalRamp": ["oklch(0.15 0.04 230)", "oklch(0.25 0.065 230)", "oklch(0.35 0.085 230)", "oklch(0.48 0.105 230)", "oklch(0.6 0.09 230)", "oklch(0.72 0.065 230)", "oklch(0.84 0.045 230)", "oklch(0.95 0.02 230)"] },
+      "ledger-white": { "role": "neutral", "displayName": "Ledger White", "canonical": "oklch(1 0 0)", "tonalRamp": ["oklch(0.15 0 0)", "oklch(0.28 0 0)", "oklch(0.42 0 0)", "oklch(0.58 0 0)", "oklch(0.72 0 0)", "oklch(0.84 0 0)", "oklch(0.94 0 0)", "oklch(1 0 0)"] },
+      "cool-paper": { "role": "neutral", "displayName": "Cool Paper", "canonical": "oklch(0.974 0.006 230)", "tonalRamp": ["oklch(0.15 0.006 230)", "oklch(0.28 0.006 230)", "oklch(0.42 0.006 230)", "oklch(0.58 0.006 230)", "oklch(0.72 0.006 230)", "oklch(0.84 0.006 230)", "oklch(0.92 0.006 230)", "oklch(0.974 0.006 230)"] },
+      "coral-signal": { "role": "secondary", "displayName": "Coral Signal", "canonical": "oklch(0.68 0.16 38)", "tonalRamp": ["oklch(0.15 0.05 38)", "oklch(0.25 0.08 38)", "oklch(0.36 0.11 38)", "oklch(0.48 0.14 38)", "oklch(0.6 0.16 38)", "oklch(0.72 0.13 38)", "oklch(0.84 0.08 38)", "oklch(0.95 0.035 38)"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Ledger Display", "purpose": "One decisive promise per view." },
+      "body": { "displayName": "Working Body", "purpose": "Forms, guidance, and business facts." },
+      "label": { "displayName": "Ledger Label", "purpose": "Field names and reconciliation annotations." }
+    },
+    "shadows": [
+      { "name": "ambient-float", "value": "0 4px 8px oklch(0.2 0.025 230 / 0.08)", "purpose": "Rare lift for transient floating elements." },
+      { "name": "focus-halo", "value": "0 0 0 3px oklch(0.94 0.035 230)", "purpose": "Keyboard focus visibility on fields and actions." }
+    ],
+    "motion": [
+      { "name": "ease-out", "value": "cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "Restrained state feedback; disabled under reduced motion." }
+    ],
+    "breakpoints": [
+      { "name": "compact-desktop", "value": "1050px" },
+      { "name": "mobile", "value": "760px" },
+      { "name": "narrow-mobile", "value": "420px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single decisive action in a payment region.",
+      "html": "<button class=\"ds-btn-primary\">Review payment →</button>",
+      "css": ".ds-btn-primary{height:44px;padding:0 17px;border:0;border-radius:6px;background:var(--primary);color:white;font:700 .86rem/1 Inter,system-ui,sans-serif;cursor:pointer;transition:background 150ms ease,box-shadow 150ms ease}.ds-btn-primary:hover{background:var(--primary-dark)}.ds-btn-primary:focus-visible{outline:none;box-shadow:0 0 0 3px var(--primary-pale)}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "A bounded, lower-priority business action.",
+      "html": "<button class=\"ds-btn-secondary\">+ Add item</button>",
+      "css": ".ds-btn-secondary{height:44px;padding:0 17px;border:1px solid var(--border-strong);border-radius:6px;background:white;color:var(--ink);font:700 .86rem/1 Inter,system-ui,sans-serif;cursor:pointer}.ds-btn-secondary:hover{background:var(--surface)}.ds-btn-secondary:focus-visible{outline:none;box-shadow:0 0 0 3px var(--primary-pale)}"
+    },
+    {
+      "name": "Order Field",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "A labeled, high-contrast business data field.",
+      "html": "<label class=\"ds-field\"><span>Order or invoice number</span><input value=\"INV-2026-1042\"></label>",
+      "css": ".ds-field{display:grid;gap:8px;color:var(--ink);font:700 .78rem/1.35 Inter,system-ui,sans-serif}.ds-field input{height:44px;padding:0 13px;border:1px solid var(--border-strong);border-radius:6px;background:white;color:var(--ink);font:400 1rem/1.4 Inter,system-ui,sans-serif}.ds-field input:focus{outline:none;border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-pale)}"
+    },
+    {
+      "name": "Asset Toggle",
+      "kind": "chip",
+      "refersTo": "asset-toggle",
+      "description": "A compact, explicitly selected SUI/USDC choice.",
+      "html": "<div class=\"ds-assets\"><button>SUI</button><button aria-checked=\"true\">USDC</button></div>",
+      "css": ".ds-assets{display:inline-flex;padding:3px;border:1px solid var(--border);border-radius:9px;background:white}.ds-assets button{height:36px;padding:0 12px;border:0;border-radius:6px;background:transparent;color:var(--ink);font:700 .75rem/1 Inter,system-ui,sans-serif}.ds-assets button[aria-checked=true]{background:var(--surface-strong)}.ds-assets button:focus-visible{outline:2px solid var(--focus);outline-offset:1px}"
+    },
+    {
+      "name": "Payment Panel",
+      "kind": "card",
+      "refersTo": "payment-panel",
+      "description": "The continuous settlement ledger, not a dashboard card.",
+      "html": "<aside class=\"ds-payment\"><small>SETTLEMENT</small><span>Order total</span><strong>$103.68</strong><hr><span>Network</span><b>Sui testnet</b></aside>",
+      "css": ".ds-payment{width:300px;padding:30px;border:1px solid var(--border);border-radius:14px;background:var(--surface);color:var(--ink);display:grid;gap:14px;font:400 .82rem/1.5 Inter,system-ui,sans-serif}.ds-payment small{color:var(--primary);font-weight:700}.ds-payment strong{font-size:2rem}.ds-payment hr{width:100%;border:0;border-top:1px solid var(--border)}.ds-payment b{text-align:right}"
+    },
+    {
+      "name": "Primary Navigation",
+      "kind": "nav",
+      "refersTo": "navigation",
+      "description": "Two durable destinations with a ruled active state.",
+      "html": "<nav class=\"ds-nav\"><button class=\"active\">+ New payment</button><button>♢ Verify</button></nav>",
+      "css": ".ds-nav{display:flex;height:56px;gap:6px;border-bottom:1px solid var(--border);background:white}.ds-nav button{position:relative;padding:0 12px;border:0;background:transparent;color:var(--ink-soft);font:700 .875rem/1 Inter,system-ui,sans-serif}.ds-nav button.active{color:var(--ink)}.ds-nav button.active:after{content:'';position:absolute;right:10px;bottom:0;left:10px;height:2px;background:var(--primary)}.ds-nav button:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}"
+    },
+    {
+      "name": "Receipt Drop Zone",
+      "kind": "custom",
+      "refersTo": "receipt-drop",
+      "description": "A clear local-file verification entry point.",
+      "html": "<label class=\"ds-drop\"><b>⇧</b><strong>Choose receipt file</strong><span>JSON files created by PayProof</span><input type=\"file\"></label>",
+      "css": ".ds-drop{min-height:140px;padding:24px;border:1px dashed var(--border-strong);border-radius:10px;background:var(--surface);color:var(--ink);display:grid;place-content:center;gap:8px;text-align:center;font:400 .75rem/1.4 Inter,system-ui,sans-serif;cursor:pointer}.ds-drop b{color:var(--primary);font-size:1.5rem}.ds-drop strong{font-size:.9rem}.ds-drop input{position:absolute;opacity:0}.ds-drop:hover{border-color:var(--primary)}.ds-drop:focus-within{box-shadow:0 0 0 3px var(--primary-pale)}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Settled Ledger",
+    "overview": "PayProof should feel like the cleanest page in a well-kept business ledger: quiet, exact, and composed when money changes hands. Strong type hierarchy and ruled structure carry the interface; color is used to establish action and status, never to manufacture excitement.",
+    "keyCharacteristics": ["Ledger-like alignment and dividers", "Restrained marine-cobalt action color", "Dense enough for work, spacious enough for review", "Plain-language status and recovery states", "Fluid from 320px mobile to wide desktop"],
+    "rules": [
+      { "name": "The One Voice Rule", "body": "Marine cobalt is the only broad saturated surface. Status colors remain small and semantic.", "section": "colors" },
+      { "name": "The Paper Rule", "body": "Depth comes from adjacent paper tones and one-pixel rules, not translucent overlays.", "section": "colors" },
+      { "name": "The Numbers Stay Still Rule", "body": "Amounts, addresses, hashes, and ledger values never use decorative italics or animated counters.", "section": "typography" },
+      { "name": "The Flat-at-Rest Rule", "body": "If every section casts a shadow, the hierarchy has failed. Restore borders and tonal contrast instead.", "section": "elevation" }
+    ],
+    "dos": ["Do keep order entry and settlement visible in one continuous workflow.", "Do use the 44px control minimum, visible focus, semantic labels, and live status announcements.", "Do pair every color state with explicit language or an icon.", "Do let long identifiers wrap safely and test at 320px width and 200% text size.", "Do explain whether a transaction is unsigned, submitted, indexing, finalized, or failed."],
+    "donts": ["Don't introduce neon crypto dashboards, trading-terminal density, or speculative token imagery.", "Don't copy generic corporate banking templates or scatter the workflow into dashboard card grids.", "Don't use glass-heavy surfaces, glassmorphism, blurred panels, or translucent decoration.", "Don't add anonymous “Web3” decoration or make users understand blockchain internals before paying.", "Don't use gradients, gradient text, excessive pills, floating rounded rectangles, or bounce easing.", "Don't publish private customer, line-item, or notes content on-chain; the public layer receives only its hash and essential payment facts."]
+  }
+}
