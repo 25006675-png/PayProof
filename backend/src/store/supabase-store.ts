@@ -28,7 +28,10 @@ export class SupabaseDisputeStore implements DisputeStore {
   async get(id: string): Promise<DisputeAggregate | undefined> {
     const { data, error } = await this.client.from("dispute_aggregates").select("aggregate").eq("id", id).maybeSingle();
     if (error) throw new Error(`Supabase read failed: ${error.message}`);
-    return data?.aggregate as DisputeAggregate | undefined;
+    if (!data?.aggregate) return undefined;
+    const aggregate = data.aggregate as DisputeAggregate;
+    aggregate.mediationRuns ??= [];
+    return aggregate;
   }
 
   async save(dispute: DisputeAggregate, expectedVersion: number): Promise<void> {

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { units, validateAllocation } from "./money.js";
 import {
   DomainError,
@@ -6,8 +7,10 @@ import {
   type DisputeAggregate,
   type DomainContext,
   type EvidenceFile,
+  type MediationRun,
   type PartySide,
   type Proposal,
+  type SettlementExecution,
   type SettlementAllocation,
   type TradeTerms,
 } from "./types.js";
@@ -84,7 +87,21 @@ function ensureEvidence(statement: string, files: EvidenceFile[]): void {
   }
 }
 
-function settle(
+function evidenceBundleHash(dispute: DisputeAggregate): string {
+  const canonical = JSON.stringify({
+    disputeId: dispute.id,
+    orderId: dispute.orderId,
+    claim: dispute.claim,
+    tradeTerms: dispute.tradeTerms,
+    evidence: dispute.evidence.map((item) => ({
+      id: item.id, side: item.side, statement: item.statement,
+      files: item.files.map((file) => ({ storagePath: file.storagePath, sha256: file.sha256, mimeType: file.mimeType, sizeBytes: file.sizeBytes })),
+    })),
+  });
+  return createHash("sha256").update(canonical).digest("hex");
+}
+
+function agreeSettlement(
   dispute: DisputeAggregate,
   allocation: SettlementAllocation,
   source: NonNullable<DisputeAggregate["settlement"]>["source"],
@@ -93,11 +110,23 @@ function settle(
   proposalId?: string,
 ): DisputeAggregate {
   validateAllocation(allocation, dispute.disputedUnits);
-  dispute.status = "settled";
-  dispute.settlement = { ...allocation, source, proposalId, settledAt: ctx.now().toISOString() };
+  dispute.status = "settlement_pending";
+  dispute.settlement = {
+    ...allocation,
+    source,
+    proposalId,
+    agreementId: ctx.id(),
+    evidenceBundleHash: evidenceBundleHash(dispute),
+    agreedAt: ctx.now().toISOString(),
+    executionStatus: "pending_on_chain",
+  };
   const proposal = proposalId ? dispute.proposals.find((item) => item.id === proposalId) : undefined;
   if (proposal) proposal.status = "accepted";
-  audit(dispute, ctx, actorId, "dispute.settled", { source, proposalId, ...allocation });
+  audit(dispute, ctx, actorId, "settlement.agreed", {
+    source, proposalId, agreementId: dispute.settlement.agreementId,
+    evidenceBundleHash: dispute.settlement.evidenceBundleHash, ...allocation,
+    executionStatus: "pending_on_chain",
+  });
   return dispute;
 }
 
@@ -131,7 +160,7 @@ export function openDispute(input: OpenDisputeInput, actor: Actor, ctx: DomainCo
     claim: input.claim.trim(), tradeTerms: input.tradeTerms, status: "supplier_review",
     negotiationDeadline: deadline.toISOString(), maxHumanRounds, currentRound: 0,
     evidence: [{ id: ctx.id(), side: "buyer", statement: input.evidenceStatement.trim(), files, submittedAt: now }],
-    proposals: [], earlyPositions: {}, audit: [], version: 0, createdAt: now, updatedAt: now,
+    proposals: [], mediationRuns: [], earlyPositions: {}, audit: [], version: 0, createdAt: now, updatedAt: now,
   };
   audit(dispute, ctx, actor.id, "dispute.opened", { disputedUnits: dispute.disputedUnits });
   if (total > disputed) {
@@ -154,7 +183,7 @@ export function supplierRespond(
   if (dispute.status !== "supplier_review") throw new DomainError("INVALID_STATE", "Supplier review is closed");
   ensureBeforeDeadline(dispute, ctx);
   if (response.agrees) {
-    return settle(dispute, {
+    return agreeSettlement(dispute, {
       buyerUnits: dispute.requestedBuyerUnits,
       supplierUnits: (units(dispute.disputedUnits) - units(dispute.requestedBuyerUnits)).toString(),
     }, "supplier_agreement", ctx, actor.id);
@@ -191,11 +220,12 @@ export function submitHumanProposal(original: DisputeAggregate, actor: Actor, in
   return dispute;
 }
 
-export function recordAiProposal(original: DisputeAggregate, proposal: Proposal, ctx: DomainContext): DisputeAggregate {
+export function recordAiProposal(original: DisputeAggregate, proposal: Proposal, ctx: DomainContext, run?: MediationRun): DisputeAggregate {
   const dispute = clone(original);
   if (dispute.status !== "negotiation_open") throw new DomainError("INVALID_STATE", "Negotiation is not open");
   ensureBeforeDeadline(dispute, ctx);
   if (openProposal(dispute)) throw new DomainError("OPEN_PROPOSAL_EXISTS", "An open proposal already exists");
+  if (run && run.disputeVersion !== original.version) throw new DomainError("STALE_MEDIATION_RUN", "The dispute changed while AI mediation was running");
   validateAllocation(proposal, dispute.disputedUnits);
   proposal.source = "ai";
   proposal.proposerSide = undefined;
@@ -203,7 +233,18 @@ export function recordAiProposal(original: DisputeAggregate, proposal: Proposal,
   proposal.status = "open";
   proposal.round = dispute.currentRound;
   dispute.proposals.push(structuredClone(proposal));
+  if (run) dispute.mediationRuns.push(structuredClone(run));
   audit(dispute, ctx, "ai-mediator", "proposal.created", { proposalId: proposal.id, round: proposal.round, source: "ai" });
+  return dispute;
+}
+
+export function recordMediationAbstention(original: DisputeAggregate, run: MediationRun, ctx: DomainContext): DisputeAggregate {
+  const dispute = clone(original);
+  if (dispute.status !== "negotiation_open") throw new DomainError("INVALID_STATE", "Negotiation is not open");
+  ensureBeforeDeadline(dispute, ctx);
+  if (run.disputeVersion !== original.version) throw new DomainError("STALE_MEDIATION_RUN", "The dispute changed while AI mediation was running");
+  dispute.mediationRuns.push(structuredClone(run));
+  audit(dispute, ctx, "ai-mediator", "mediation.abstained", { runId: run.id, outcome: run.outcome, validationIssues: run.validationIssues });
   return dispute;
 }
 
@@ -217,7 +258,7 @@ export function acceptProposal(original: DisputeAggregate, actor: Actor, proposa
   if (!proposal.acceptances.includes(side)) proposal.acceptances.push(side);
   audit(dispute, ctx, actor.id, "proposal.accepted_by_party", { proposalId, side });
   if (proposal.acceptances.includes("buyer") && proposal.acceptances.includes("supplier")) {
-    return settle(dispute, proposal, "mutual_proposal", ctx, actor.id, proposal.id);
+    return agreeSettlement(dispute, proposal, "mutual_proposal", ctx, actor.id, proposal.id);
   }
   return dispute;
 }
@@ -280,7 +321,7 @@ export function submitEarlyPosition(original: DisputeAggregate, actor: Actor, in
   if (other && other.buyerUnits === proposal.buyerUnits && other.supplierUnits === proposal.supplierUnits) {
     proposal.acceptances = ["buyer", "supplier"];
     dispute.proposals.push(proposal);
-    return settle(dispute, proposal, "early_mutual", ctx, actor.id, proposal.id);
+    return agreeSettlement(dispute, proposal, "early_mutual", ctx, actor.id, proposal.id);
   }
   return dispute;
 }
@@ -297,7 +338,32 @@ export function arbitratorInstruct(original: DisputeAggregate, actor: Actor, inp
     status: "accepted", createdAt: ctx.now().toISOString(),
   };
   dispute.proposals.push(proposal);
-  return settle(dispute, proposal, "arbitrator", ctx, actor.id, proposal.id);
+  return agreeSettlement(dispute, proposal, "arbitrator", ctx, actor.id, proposal.id);
+}
+
+export function confirmSettlementExecution(
+  original: DisputeAggregate,
+  execution: Omit<SettlementExecution, "verifiedAt">,
+  ctx: DomainContext,
+): DisputeAggregate {
+  const dispute = clone(original);
+  if (dispute.status !== "settlement_pending" || !dispute.settlement) {
+    throw new DomainError("INVALID_STATE", "No settlement agreement is awaiting on-chain execution");
+  }
+  for (const [name, value] of Object.entries(execution)) {
+    if (name !== "checkpoint" && (!value || !String(value).trim())) {
+      throw new DomainError("INVALID_SETTLEMENT_EXECUTION", `${name} is required`, 400);
+    }
+  }
+  dispute.status = "settled";
+  dispute.settlement.executionStatus = "verified_on_chain";
+  dispute.settlement.execution = { ...execution, verifiedAt: ctx.now().toISOString() };
+  audit(dispute, ctx, "sui-verifier", "settlement.executed_on_chain", {
+    agreementId: dispute.settlement.agreementId,
+    transactionDigest: execution.transactionDigest,
+    receiptObjectId: execution.receiptObjectId,
+  });
+  return dispute;
 }
 
 export function buildArbitrationPackage(dispute: DisputeAggregate, ctx: DomainContext): ArbitrationCasePackage {
@@ -314,6 +380,7 @@ export function buildArbitrationPackage(dispute: DisputeAggregate, ctx: DomainCo
     },
     evidence: structuredClone(dispute.evidence),
     aiAnalysis: dispute.proposals.filter((proposal) => proposal.source === "ai"),
+    mediationRuns: structuredClone(dispute.mediationRuns),
     negotiationHistory: dispute.proposals.filter((proposal) => proposal.source !== "arbitrator"),
     audit: structuredClone(dispute.audit),
   };

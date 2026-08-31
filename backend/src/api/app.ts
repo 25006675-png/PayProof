@@ -1,8 +1,10 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { MediationOrchestrator } from "../ai/mediation.js";
+import { type DemoCommand, type DemoOrderService } from "../demo/demo-service.js";
 import { DomainError, type Actor } from "../domain/types.js";
 import type { DisputeService } from "../service/dispute-service.js";
+import type { SuiSettlementVerifier } from "../integrations/sui-settlement.js";
 
 export interface TokenVerifier { verify(token: string): Promise<Actor>; }
 
@@ -18,7 +20,13 @@ const openSchema = z.object({
   evidenceStatement: z.string().min(1).max(20_000), evidenceFiles: z.array(fileSchema).max(20).optional(),
 });
 
-export function createApp(service: DisputeService, verifier: TokenVerifier, mediator?: MediationOrchestrator) {
+export function createApp(
+  service: DisputeService,
+  verifier: TokenVerifier,
+  mediator?: MediationOrchestrator,
+  demo?: DemoOrderService,
+  settlementVerifier?: SuiSettlementVerifier,
+) {
   const app = new Hono<{ Variables: { actor: Actor } }>();
   app.onError((error, c) => {
     if (error instanceof DomainError) return c.json({ error: error.code, message: error.message }, error.status as any);
@@ -53,9 +61,14 @@ export function createApp(service: DisputeService, verifier: TokenVerifier, medi
     const dispute = await service.get(c.req.param("id"));
     const actor = c.get("actor");
     if (![dispute.buyerId, dispute.supplierId].includes(actor.id)) throw new DomainError("FORBIDDEN", "Only a party may request mediation", 403);
+    if (dispute.proposals.some((proposal) => proposal.status === "open")) {
+      throw new DomainError("OPEN_PROPOSAL_EXISTS", "Resolve the open proposal before starting AI mediation");
+    }
     const result = await mediator.mediate(dispute);
-    if (result.outcome === "abstain") return c.json(result);
-    return c.json({ ...result, dispute: await service.recordAi(dispute.id, result.proposal) });
+    if (result.outcome === "abstain") {
+      return c.json({ ...result, dispute: await service.recordAiAbstention(dispute.id, result.run) });
+    }
+    return c.json({ ...result, dispute: await service.recordAi(dispute.id, result.proposal, result.run) });
   });
   app.post("/v1/disputes/:id/enforce-deadline", async (c) => {
     const dispute = await service.get(c.req.param("id"));
@@ -66,5 +79,41 @@ export function createApp(service: DisputeService, verifier: TokenVerifier, medi
   app.post("/v1/disputes/:id/early-position", async (c) => c.json(await service.earlyPosition(c.req.param("id"), c.get("actor"), proposalSchema.parse(await c.req.json()))));
   app.post("/v1/disputes/:id/arbitrator-decision", async (c) => c.json(await service.decide(c.req.param("id"), c.get("actor"), proposalSchema.parse(await c.req.json()))));
   app.get("/v1/disputes/:id/arbitration-package", async (c) => c.json(await service.arbitrationPackage(c.req.param("id"), c.get("actor"))));
+  app.post("/v1/disputes/:id/settlement-execution", async (c) => {
+    if (!settlementVerifier) throw new DomainError("SUI_ESCROW_UNAVAILABLE", "The escrow settlement verifier is not configured", 503);
+    const dispute = await service.get(c.req.param("id"));
+    const actor = c.get("actor");
+    if (![dispute.buyerId, dispute.supplierId, dispute.arbitratorId].includes(actor.id)) {
+      throw new DomainError("FORBIDDEN", "Actor cannot submit settlement execution proof", 403);
+    }
+    const proof = z.object({
+      transactionDigest: z.string().min(1).max(256), packageId: z.string().min(1).max(256),
+      escrowObjectId: z.string().min(1).max(256), receiptObjectId: z.string().min(1).max(256),
+    }).parse(await c.req.json());
+    const verified = await settlementVerifier.verify(dispute, proof);
+    return c.json(await service.confirmSettlement(dispute.id, verified));
+  });
+  app.get("/v1/demo/orders", (c) => {
+    if (!demo) throw new DomainError("DEMO_DISABLED", "Demo controls are disabled", 404);
+    return c.json({ disclosure: "Demo controls explicitly label simulated, seeded, live-AI, and external-Sui steps.", orders: demo.list() });
+  });
+  app.post("/v1/demo/orders/reset", (c) => {
+    if (!demo) throw new DomainError("DEMO_DISABLED", "Demo controls are disabled", 404);
+    return c.json({ orders: demo.reset() });
+  });
+  app.post("/v1/demo/orders/:id/advance", async (c) => {
+    if (!demo) throw new DomainError("DEMO_DISABLED", "Demo controls are disabled", 404);
+    const body = z.object({
+      command: z.enum([
+        "confirm_order", "record_escrow_funding", "skip_fulfilment_wait", "seed_buyer_claim",
+        "seed_supplier_counter", "attach_live_mediation", "buyer_accepts", "supplier_accepts", "record_sui_settlement",
+      ]),
+      reference: z.object({
+        transactionDigest: z.string().min(1).max(256).optional(), objectId: z.string().min(1).max(256).optional(),
+        receiptObjectId: z.string().min(1).max(256).optional(), mediationRunId: z.string().min(1).max(256).optional(), proposalId: z.string().min(1).max(256).optional(),
+      }).optional(),
+    }).parse(await c.req.json());
+    return c.json(demo.advance(c.req.param("id"), { command: body.command as DemoCommand, reference: body.reference }));
+  });
   return app;
 }

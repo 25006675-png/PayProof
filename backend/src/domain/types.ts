@@ -3,6 +3,7 @@ export type DisputeStatus =
   | "supplier_review"
   | "negotiation_open"
   | "arbitration_pending"
+  | "settlement_pending"
   | "settled";
 
 export type ProposalSource = "human" | "ai" | "arbitrator" | "early_position";
@@ -29,6 +30,51 @@ export interface LegalCitation {
   title: string;
   locator: string;
   sourceUrl: string;
+  excerpt: string;
+}
+
+export interface AdvocatePosition {
+  side: PartySide;
+  recommendedBuyerRefundUnits: string;
+  recommendedSupplierReleaseUnits: string;
+  evidenceBasis: Array<{ evidenceId: string; quote: string }>;
+  legalBasis: Array<{ passageId: string; quote: string }>;
+  inferences: string[];
+  unresolvedQuestions: string[];
+}
+
+export type MediatorDecision =
+  | {
+      outcome: "proposal";
+      buyerRefundUnits: string;
+      supplierReleaseUnits: string;
+      evidenceBasis: Array<{ evidenceId: string; quote: string }>;
+      legalBasis: Array<{ passageId: string; quote: string }>;
+      inferences: string[];
+      evidenceSufficiency: "strong" | "moderate" | "weak";
+      legalRelevance: "direct" | "analogous" | "limited";
+      unresolvedQuestions: string[];
+    }
+  | {
+      outcome: "abstain";
+      reason: string;
+      legalBasis: Array<{ passageId: string; quote: string }>;
+      unresolvedQuestions: string[];
+    };
+
+/** Structured final outputs only. Hidden model reasoning is deliberately not stored. */
+export interface MediationRun {
+  id: string;
+  disputeVersion: number;
+  createdAt: string;
+  debateRounds: number;
+  modelCalls: number;
+  legalContext: LegalCitation[];
+  buyerFinal?: AdvocatePosition;
+  supplierFinal?: AdvocatePosition;
+  mediatorFinal?: MediatorDecision;
+  outcome: "proposal" | "abstain" | "validation_failed";
+  validationIssues: string[];
 }
 
 export interface SettlementAllocation {
@@ -56,7 +102,20 @@ export interface Proposal extends SettlementAllocation {
 export interface SettlementRecord extends SettlementAllocation {
   source: "supplier_agreement" | "mutual_proposal" | "arbitrator" | "early_mutual";
   proposalId?: string;
-  settledAt: string;
+  agreementId: string;
+  evidenceBundleHash: string;
+  agreedAt: string;
+  executionStatus: "pending_on_chain" | "verified_on_chain";
+  execution?: SettlementExecution;
+}
+
+export interface SettlementExecution {
+  transactionDigest: string;
+  packageId: string;
+  escrowObjectId: string;
+  receiptObjectId: string;
+  checkpoint?: string;
+  verifiedAt: string;
 }
 
 export interface AuditEvent {
@@ -95,6 +154,7 @@ export interface DisputeAggregate {
   currentRound: number;
   evidence: EvidenceSubmission[];
   proposals: Proposal[];
+  mediationRuns: MediationRun[];
   earlyPositions: Partial<Record<PartySide, Proposal>>;
   settlement?: SettlementRecord;
   escalationReason?: string;
@@ -122,6 +182,7 @@ export interface ArbitrationCasePackage {
   >;
   evidence: EvidenceSubmission[];
   aiAnalysis: Proposal[];
+  mediationRuns: MediationRun[];
   negotiationHistory: Proposal[];
   audit: AuditEvent[];
 }

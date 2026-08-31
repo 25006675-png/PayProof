@@ -10,5 +10,5 @@ const index = new QdrantLegalIndex(
   config.qdrantUrl(), config.qdrantApiKey(), config.legalCollection,
   new GeminiEmbedder(config.geminiApiKey(), config.embeddingModel),
 );
-await index.upsert(passages);
-console.log(`Indexed ${passages.length} passages into ${config.legalCollection}.`);
+const result = await index.synchronize(passages);
+console.log(`Synchronized ${result.total} passages into ${config.legalCollection}: ${result.upserted} embedded, ${result.retained} retained, ${result.deleted} stale removed.`);

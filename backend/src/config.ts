@@ -24,5 +24,6 @@ export const config = {
   legalCollection: process.env.LEGAL_COLLECTION ?? "payproof_malaysia_law_v1",
   store: process.env.BACKEND_STORE ?? "memory",
   port: Number(process.env.PORT ?? 8787),
+  demoMode: process.env.PAYPROOF_DEMO_MODE === "true",
   corpusDir: path.resolve(here, "../../docs/corpus"),
 };

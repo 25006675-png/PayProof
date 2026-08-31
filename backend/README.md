@@ -7,7 +7,7 @@ This service implements the off-chain dispute, negotiation, legal-RAG, and arbit
 ```text
 buyer claim + evidence
         |
-supplier agrees --------------------------> settlement instruction
+supplier agrees --------------------------> settlement agreement (pending Sui)
         |
 supplier counter-evidence
         |
@@ -21,17 +21,19 @@ deadline/round limit ---------------------> arbitration package
                                                 |
 matching early positions <---------------------+
                                                 |
-designated arbitrator instruction --------------> settlement instruction
+designated arbitrator instruction --------------> settlement agreement (pending Sui)
+                                                         |
+trusted Sui effect verifier ----------------------------> settled receipt
 ```
 
-The AI uses two advocates and one neutral mediator/critic. The orchestrator permits at most two internal debate rounds and five model calls. It stops after one round when positions converge. `abstain` is a valid result when evidence or verified authority is inadequate.
+The AI uses two advocates and one neutral mediator/critic. The orchestrator permits at most two internal debate rounds and five model calls. It stops after one round when positions converge. `abstain` is a valid result when evidence or verified authority is inadequate. Final agent records contain structured outputs, exact evidence/legal quotes, labelled inferences, and neutral open questions—not hidden chain-of-thought.
 
 ## Safety invariants
 
 - Buyer, supplier, and arbitrator identities must be distinct.
 - Only the buyer opens a claim and only the supplier performs supplier review.
 - Supplier disagreement requires counter-evidence before negotiation opens.
-- Every allocation uses integer asset units and must exactly equal the disputed balance.
+- AI money fields explicitly mean `buyerRefundUnits` and `supplierReleaseUnits`; both are required and must exactly equal the disputed balance. The refund cannot exceed the buyer's requested remedy.
 - The undisputed balance is separated immediately; current execution status remains `pending_on_chain_escrow`.
 - One proposal can be open at a time. AI proposals have no implicit acceptance.
 - A human proposal is accepted initially only by its proposer; both parties must accept to settle.
@@ -39,7 +41,8 @@ The AI uses two advocates and one neutral mediator/critic. The orchestrator perm
 - During pending arbitration, independently matching party positions settle early.
 - Only the designated arbitrator can issue a final instruction.
 - Evidence and contract content are treated as untrusted data, not model instructions.
-- AI citations must resolve to retrieved corpus passage IDs; invented citations and unbalanced arithmetic are rejected.
+- AI evidence and legal quotes must occur in the referenced source text. Unknown IDs, fabricated quotes, unsupported allocations, and unbalanced arithmetic produce a recorded safety abstention rather than an open proposal.
+- Human agreement creates `settlement_pending`. Only a trusted Sui verifier port can record transaction effects and advance the dispute to `settled`.
 - Aggregate writes use optimistic versions to prevent lost updates.
 
 ## Local commands
@@ -80,7 +83,21 @@ npm run test:qdrant
 npm run test:mediation
 ```
 
-The focused ingestion selects 25 directly relevant passages from 150 verified chunks. The live mediation smoke test completed two deliberation rounds and five model calls, returned verified corpus citations, conserved the full disputed balance through deterministic backend arithmetic, and completed independent acceptance by both parties.
+The focused ingestion selects 25 source-balanced, substantive passages from 150 verified chunks. Synchronization reuses unchanged content-hash IDs, embeds missing passages first, and deletes stale points only after successful upsert. The live mediation smoke test returned an explicit 6,000-unit buyer refund plus 24,000-unit supplier release, exact evidence/legal quotes, labelled inferences, and independently persisted party/mediator finals. The isolated suite currently contains 45 passing tests.
+
+## Demo progression API
+
+Set `PAYPROOF_DEMO_MODE=true` only in a demo environment. Authenticated routes expose one mutable hero order and read-only background orders:
+
+- `GET /v1/demo/orders`
+- `POST /v1/demo/orders/reset`
+- `POST /v1/demo/orders/:id/advance`
+
+Every transition returns an `executionKind`: `live_backend`, `live_ai_reference`, `simulated_wait`, `seeded_demo_data`, or `external_sui_reference`. Shipping/deadline waits may be fast-forwarded, but escrow funding, a live mediation result, and Sui settlement require external references. Both human acceptances stop at `awaiting_sui_settlement`; the harness never labels that agreement as executed funds.
+
+## Current Sui boundary
+
+`POST /v1/disputes/:id/settlement-execution` is disabled unless the server is constructed with a `SuiSettlementVerifier`. That verifier must read trusted Sui RPC transaction/object effects and confirm the package, escrow object, receipt object, and exact allocation. The deployed PayProof Move package currently performs immediate payment and is not an escrow package, so no production verifier is configured and the backend deliberately returns `503 SUI_ESCROW_UNAVAILABLE` instead of accepting a client-supplied digest as proof.
 
 ## Legal corpus
 

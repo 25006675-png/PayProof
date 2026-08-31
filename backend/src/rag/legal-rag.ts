@@ -20,6 +20,7 @@ export interface LegalPassage {
   locator: string;
   sourceUrl: string;
   text: string;
+  kind?: "statute" | "judgment";
   score?: number;
 }
 
@@ -38,7 +39,7 @@ export async function loadCorpus(corpusDir: string): Promise<LegalPassage[]> {
       const locator = paragraph ? `paragraph ${paragraph}` : section ? section.slice(0, 160) : `${source.kind === "judgment" ? "judgment" : "statute"} chunk ${index + 1}`;
       passages.push({
         id: toUuid(createHash("sha256").update(`${source.id}:${index}:${chunk}`).digest("hex")),
-        sourceId: source.id, title: source.title, locator, sourceUrl: source.sourceUrl, text: chunk,
+        sourceId: source.id, title: source.title, locator, sourceUrl: source.sourceUrl, text: chunk, kind: source.kind,
       });
     }
   }
@@ -89,6 +90,46 @@ export class LocalLegalRetriever implements LegalRetriever {
   }
 }
 
+export function isSubstantiveLegalPassage(passage: LegalPassage): boolean {
+  const normalized = passage.text.replace(/\s+/g, " ").trim();
+  if (normalized.length < 180) return false;
+  if (/arrangement of sections/i.test(normalized) || /\.{4,}\s*\d+/.test(normalized)) return false;
+  const numberedLines = passage.text.match(/^\s*\d+[A-Z]?\.\s+/gm)?.length ?? 0;
+  if (/^\s*section\s*$/im.test(passage.text) && numberedLines >= 8) return false;
+  return true;
+}
+
+/**
+ * Preserve semantic ranking while guaranteeing source diversity when the candidate
+ * set contains it. This prevents one long statute from crowding out remedies and
+ * precedent merely because it has more near-duplicate chunks.
+ */
+export function balanceLegalPassages(candidates: LegalPassage[], limit = 8): LegalPassage[] {
+  const ranked = candidates.filter(isSubstantiveLegalPassage).sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  const bySource = new Map<string, LegalPassage[]>();
+  for (const passage of ranked) {
+    const group = bySource.get(passage.sourceId) ?? [];
+    group.push(passage);
+    bySource.set(passage.sourceId, group);
+  }
+  const result: LegalPassage[] = [];
+  const sources = [...bySource.keys()].sort((a, b) => ((bySource.get(b)?.[0]?.score ?? 0) - (bySource.get(a)?.[0]?.score ?? 0)));
+  let depth = 0;
+  while (result.length < limit) {
+    let added = false;
+    for (const source of sources) {
+      const candidate = bySource.get(source)?.[depth];
+      if (candidate && result.length < limit) {
+        result.push(candidate);
+        added = true;
+      }
+    }
+    if (!added) break;
+    depth += 1;
+  }
+  return result;
+}
+
 export async function selectRelevantLegalPassages(passages: LegalPassage[], perQuery = 10): Promise<LegalPassage[]> {
   const retriever = new LocalLegalRetriever(passages);
   const queries = [
@@ -98,9 +139,11 @@ export async function selectRelevantLegalPassages(passages: LegalPassage[], perQ
   ];
   const selected = new Map<string, LegalPassage>();
   for (const query of queries) {
-    for (const passage of await retriever.retrieve(query, perQuery)) selected.set(passage.id, passage);
+    for (const passage of await retriever.retrieve(query, perQuery * 2)) {
+      if (isSubstantiveLegalPassage(passage)) selected.set(passage.id, passage);
+    }
   }
-  return [...selected.values()];
+  return balanceLegalPassages([...selected.values()], 25);
 }
 
 export async function corpusFiles(corpusDir: string): Promise<string[]> {

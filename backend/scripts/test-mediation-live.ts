@@ -3,8 +3,30 @@ import { MediationOrchestrator } from "../src/ai/mediation.js";
 import { acceptProposal, openDispute, recordAiProposal, supplierRespond } from "../src/domain/dispute-machine.js";
 import type { DomainContext } from "../src/domain/types.js";
 import { config } from "../src/config.js";
-import { GeminiEmbedder, GeminiJsonModel } from "../src/integrations/gemini.js";
+import { GeminiEmbedder, GeminiJsonModel, type JsonModel } from "../src/integrations/gemini.js";
 import { QdrantLegalIndex } from "../src/integrations/qdrant.js";
+
+type RecordedResponse = {
+  role: "buyer" | "supplier" | "mediator";
+  stage: "initial" | "final";
+  response: unknown;
+};
+
+const recordedResponses: RecordedResponse[] = [];
+const gemini = new GeminiJsonModel(config.geminiApiKey(), config.geminiModel);
+const recordingModel: JsonModel = {
+  async generateJson<T>(system: string, input: string, jsonSchema?: Record<string, unknown>): Promise<T> {
+    const response = await gemini.generateJson<T>(system, input, jsonSchema);
+    const role = system.includes("neutral mediator")
+      ? "mediator"
+      : system.includes("buyer advocate")
+        ? "buyer"
+        : "supplier";
+    const stage = system.includes("final rebuttal") || role === "mediator" ? "final" : "initial";
+    recordedResponses.push({ role, stage, response });
+    return response;
+  },
+};
 
 const now = new Date("2026-08-31T08:00:00.000Z");
 const ctx: DomainContext = { now: () => new Date(now), id: () => randomUUID() };
@@ -33,19 +55,28 @@ const retriever = new QdrantLegalIndex(
   new GeminiEmbedder(config.geminiApiKey(), config.embeddingModel),
 );
 const result = await new MediationOrchestrator(
-  new GeminiJsonModel(config.geminiApiKey(), config.geminiModel), retriever, ctx,
+  recordingModel, retriever, ctx,
 ).mediate(dispute);
 
 if (result.outcome === "abstain") {
   if (!result.reason || !result.unresolvedIssues.length) throw new Error("Live mediator abstained without a structured reason");
-  console.log(`Live mediation safely abstained after ${result.debateRounds} round(s) and ${result.modelCalls} calls; citations=${result.citations.length}.`);
+  if (result.run.outcome === "validation_failed") throw new Error(`Live mediation failed safety validation: ${result.run.validationIssues.join("; ")}`);
 } else {
   if (!result.proposal.citations.length) throw new Error("Live AI proposal contained no verified legal citations");
-  dispute = recordAiProposal(dispute, result.proposal, ctx);
+  dispute = recordAiProposal(dispute, result.proposal, ctx, result.run);
   dispute = acceptProposal(dispute, buyer, result.proposal.id, ctx);
   dispute = acceptProposal(dispute, supplier, result.proposal.id, ctx);
-  if (dispute.status !== "settled" || dispute.settlement?.source !== "mutual_proposal") throw new Error("Live AI proposal did not complete the acceptance flow");
-  console.log(`Live mediation proposal passed: rounds=${result.debateRounds}, calls=${result.modelCalls}, citations=${result.proposal.citations.length}.`);
-  console.log(`Validated allocation: buyer=${result.proposal.buyerUnits}, supplier=${result.proposal.supplierUnits}, total=${dispute.disputedUnits}.`);
-  console.log("Independent buyer and supplier acceptance completed the immutable proposal flow.");
+  if (dispute.status !== "settlement_pending" || dispute.settlement?.source !== "mutual_proposal") throw new Error("Live AI proposal did not complete the two-party agreement flow");
 }
+
+const finalFor = (role: RecordedResponse["role"]) =>
+  recordedResponses.filter((item) => item.role === role).at(-1)?.response ?? null;
+
+console.log(JSON.stringify({
+  evidence: dispute.evidence.map(({ id, side, statement, files }) => ({ id, side, statement, files })),
+  agentFinalResponses: {
+    buyerAdvocate: finalFor("buyer"),
+    supplierAdvocate: finalFor("supplier"),
+    neutralMediator: finalFor("mediator"),
+  },
+}, null, 2));

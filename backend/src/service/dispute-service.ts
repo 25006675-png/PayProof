@@ -1,10 +1,11 @@
 import {
-  acceptProposal, arbitratorInstruct, buildArbitrationPackage, counterProposal,
-  enforceDeadline, openDispute, recordAiProposal, rejectProposal, submitEarlyPosition,
+  acceptProposal, arbitratorInstruct, buildArbitrationPackage, confirmSettlementExecution, counterProposal,
+  enforceDeadline, openDispute, recordAiProposal, recordMediationAbstention, rejectProposal, submitEarlyPosition,
   submitHumanProposal, supplierRespond, type OpenDisputeInput, type ProposalInput,
 } from "../domain/dispute-machine.js";
-import { DomainError, type Actor, type DisputeAggregate, type DomainContext, type EvidenceFile, type Proposal } from "../domain/types.js";
+import { DomainError, type Actor, type DisputeAggregate, type DomainContext, type EvidenceFile, type MediationRun, type Proposal } from "../domain/types.js";
 import type { DisputeStore } from "../store/store.js";
+import type { SettlementExecution } from "../domain/types.js";
 
 export class DisputeService {
   constructor(private readonly store: DisputeStore, private readonly ctx: DomainContext) {}
@@ -34,8 +35,11 @@ export class DisputeService {
   propose(id: string, actor: Actor, input: ProposalInput) {
     return this.update(id, (d) => submitHumanProposal(d, actor, input, this.ctx));
   }
-  recordAi(id: string, proposal: Proposal) {
-    return this.update(id, (d) => recordAiProposal(d, proposal, this.ctx));
+  recordAi(id: string, proposal: Proposal, run?: MediationRun) {
+    return this.update(id, (d) => recordAiProposal(d, proposal, this.ctx, run));
+  }
+  recordAiAbstention(id: string, run: MediationRun) {
+    return this.update(id, (d) => recordMediationAbstention(d, run, this.ctx));
   }
   accept(id: string, actor: Actor, proposalId: string) {
     return this.update(id, (d) => acceptProposal(d, actor, proposalId, this.ctx));
@@ -54,6 +58,9 @@ export class DisputeService {
   }
   decide(id: string, actor: Actor, input: ProposalInput) {
     return this.update(id, (d) => arbitratorInstruct(d, actor, input, this.ctx));
+  }
+  confirmSettlement(id: string, execution: Omit<SettlementExecution, "verifiedAt">) {
+    return this.update(id, (d) => confirmSettlementExecution(d, execution, this.ctx));
   }
   async arbitrationPackage(id: string, actor: Actor) {
     const dispute = await this.get(id);

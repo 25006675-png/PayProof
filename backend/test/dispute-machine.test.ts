@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  acceptProposal, arbitratorInstruct, buildArbitrationPackage, counterProposal, enforceDeadline,
+  acceptProposal, arbitratorInstruct, buildArbitrationPackage, confirmSettlementExecution, counterProposal, enforceDeadline,
   openDispute, recordAiProposal, rejectProposal, submitEarlyPosition, submitHumanProposal, supplierRespond,
 } from "../src/domain/dispute-machine.js";
 import type { Proposal } from "../src/domain/types.js";
@@ -34,12 +34,13 @@ describe("dispute state machine", () => {
     expect(() => openDispute(openInput(overrides), buyer, ctx)).toThrow(expect.objectContaining({ code }));
   });
 
-  it("settles to the buyer claim when supplier agrees", () => {
+  it("records an agreement without claiming on-chain settlement when supplier agrees", () => {
     const control = controlledContext();
     const opened = openDispute(openInput(), buyer, control.ctx);
     const result = supplierRespond(opened, supplier, { agrees: true }, control.ctx);
-    expect(result.status).toBe("settled");
-    expect(result.settlement).toMatchObject({ buyerUnits: "20000", supplierUnits: "10000", source: "supplier_agreement" });
+    expect(result.status).toBe("settlement_pending");
+    expect(result.settlement).toMatchObject({ buyerUnits: "20000", supplierUnits: "10000", source: "supplier_agreement", executionStatus: "pending_on_chain" });
+    expect(result.settlement?.evidenceBundleHash).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it("requires supplier counter-evidence before negotiation", () => {
@@ -51,13 +52,13 @@ describe("dispute state machine", () => {
     expect(result.evidence.map((item) => item.side)).toEqual(["buyer", "supplier"]);
   });
 
-  it("settles only after both parties accept an immutable human proposal", () => {
+  it("creates a pending settlement instruction only after both parties accept an immutable human proposal", () => {
     const { control, dispute } = negotiating();
     const proposed = submitHumanProposal(dispute, buyer, { buyerUnits: "18000", supplierUnits: "12000", summary: "Compromise" }, control.ctx);
     expect(proposed.proposals[0]?.acceptances).toEqual(["buyer"]);
-    const settled = acceptProposal(proposed, supplier, proposed.proposals[0]!.id, control.ctx);
-    expect(settled.status).toBe("settled");
-    expect(settled.settlement?.source).toBe("mutual_proposal");
+    const agreed = acceptProposal(proposed, supplier, proposed.proposals[0]!.id, control.ctx);
+    expect(agreed.status).toBe("settlement_pending");
+    expect(agreed.settlement?.source).toBe("mutual_proposal");
     expect(dispute.proposals).toHaveLength(0);
   });
 
@@ -94,7 +95,7 @@ describe("dispute state machine", () => {
     state = acceptProposal(state, buyer, "ai-1", control.ctx);
     expect(state.status).toBe("negotiation_open");
     state = acceptProposal(state, supplier, "ai-1", control.ctx);
-    expect(state.status).toBe("settled");
+    expect(state.status).toBe("settlement_pending");
   });
 
   it("allows matching independent positions to settle during pending arbitration", () => {
@@ -104,7 +105,7 @@ describe("dispute state machine", () => {
     state = submitEarlyPosition(state, buyer, { buyerUnits: "14000", supplierUnits: "16000", summary: "Buyer position" }, control.ctx);
     expect(state.status).toBe("arbitration_pending");
     state = submitEarlyPosition(state, supplier, { buyerUnits: "14000", supplierUnits: "16000", summary: "Supplier position" }, control.ctx);
-    expect(state.status).toBe("settled");
+    expect(state.status).toBe("settlement_pending");
     expect(state.settlement?.source).toBe("early_mutual");
   });
 
@@ -119,6 +120,18 @@ describe("dispute state machine", () => {
     const settled = arbitratorInstruct(escalated, arbitrator, { buyerUnits: "10000", supplierUnits: "20000", summary: "Final decision" }, control.ctx);
     expect(settled.settlement?.source).toBe("arbitrator");
     expect(settled.proposals.at(-1)?.proposedBy).toBe(ARBITRATOR);
+  });
+
+  it("marks settlement complete only after a trusted verifier supplies complete Sui effects", () => {
+    const control = controlledContext();
+    const opened = openDispute(openInput(), buyer, control.ctx);
+    const agreed = supplierRespond(opened, supplier, { agrees: true }, control.ctx);
+    const settled = confirmSettlementExecution(agreed, {
+      transactionDigest: "tx-digest", packageId: "0xpackage", escrowObjectId: "0xescrow", receiptObjectId: "0xreceipt", checkpoint: "42",
+    }, control.ctx);
+    expect(settled.status).toBe("settled");
+    expect(settled.settlement).toMatchObject({ executionStatus: "verified_on_chain", execution: { transactionDigest: "tx-digest", receiptObjectId: "0xreceipt", checkpoint: "42" } });
+    expect(settled.audit.at(-1)?.type).toBe("settlement.executed_on_chain");
   });
 
   it("rejects actors outside the buyer/supplier/arbitrator roles", () => {
