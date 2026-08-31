@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-31T00:00:00.000Z",
+  "sources": [
+    {
+      "id": "my-act-382-2006",
+      "kind": "statute",
+      "title": "Sale of Goods Act 1957 (Act 382), 2006 reprint",
+      "file": "Sale-of-Goods-Act-1957.md",
+      "originalFile": "../Sale-of-Goods-Act-1957.pdf",
+      "sourceUrl": "https://mylaw.my/legislation/sale-of-goods-act-1957",
+      "sha256": "376549DE137DED77AB78FDB40F8623A87578417AF331CBC71A81E8AF078B3A62",
+      "verifiedThrough": "2006-01-01",
+      "notes": "Commissioner of Law Revision reprint already supplied in the repository; the linked structured copy identifies its AGC provenance. Production use requires checking later amendments."
+    },
+    {
+      "id": "my-act-136-2006",
+      "kind": "statute",
+      "title": "Contracts Act 1950 (Act 136), 2006 reprint",
+      "file": "Contracts-Act-1950.md",
+      "originalFile": "../Contracts-Act-1950.pdf",
+      "sourceUrl": "https://www.investmalaysia.gov.my/media/o0ajehya/contracts-act-1950.pdf",
+      "sha256": "2F419D27513969F67281E18EA2D17E72C6344FC19AC148CC92BF79C0D8F6FE98",
+      "verifiedThrough": "2006-01-01",
+      "notes": "Commissioner of Law Revision reprint. Production use requires checking later amendments."
+    },
+    {
+      "id": "puncak-niaga-v-nz-wheels-2011-ca",
+      "kind": "judgment",
+      "title": "Puncak Niaga (M) Sdn Bhd v NZ Wheels Sdn Bhd, Court of Appeal",
+      "file": "Puncak-Niaga-v-NZ-Wheels-2011-CA.md",
+      "originalFile": "../cases/Puncak-Niaga-v-NZ-Wheels-2011-CA.pdf",
+      "sourceUrl": "https://kensomuse.com/wp-content/uploads/2015/10/W-02IM-2348-2009.pdf",
+      "sha256": "FE18448C2A7693798A6B0A3D178AF57A2026E784E10AE71C5A66B457D3514059",
+      "court": "Court of Appeal of Malaysia",
+      "caseNumber": "W-02(IM)-2348-2009",
+      "notes": "Complete grounds of judgment mirrored by a Malaysian law-firm site; verify against an official reporter before production reliance."
+    }
+  ]
+}

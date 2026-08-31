@@ -2,6 +2,8 @@
 
 PayProof is a Sui testnet payment application for SMEs: enter a detailed order, settle it atomically in SUI or testnet USDC, download a privacy-preserving receipt, and independently verify the receipt against Sui.
 
+The repository now also contains the first backend vertical slice for bounded, cited dispute mediation: buyer and supplier evidence, immutable settlement proposals, three human negotiation rounds, deadline escalation, and a structured human-arbitration package. See [backend/README.md](./backend/README.md). This backend records settlement instructions; a new audited Sui escrow contract is still required before it can control real funds.
+
 ## Live testnet deployment
 
 - Package: [`0xe736a1c424b9d608b42b2cb09925e537324e6f9f4ca7452d88d822c4c7824263`](https://suiscan.xyz/testnet/object/0xe736a1c424b9d608b42b2cb09925e537324e6f9f4ca7452d88d822c4c7824263)
@@ -44,13 +46,18 @@ npm run test:testnet
 npm run visual-check
 ```
 
-Current automated coverage: 6 Move cases and 25 frontend cases. See [simplified_flow.md](./simplified_flow.md), [technical_architecture.md](./technical_architecture.md), [PRODUCT.md](./PRODUCT.md), and [DESIGN.md](./DESIGN.md).
+Current automated coverage: 6 Move cases and 26 frontend cases. See [simplified_flow.md](./simplified_flow.md), [technical_architecture.md](./technical_architecture.md), [PRODUCT.md](./PRODUCT.md), and [DESIGN.md](./DESIGN.md).
+
+The dispute backend adds 32 tests covering authorization, evidence gates, immutable proposals, exact money conservation, deadline boundaries, negotiation caps, AI abstention, citation/evidence-ID validation, arbitration, concurrency, HTTP behavior, focused corpus selection, and retrieval from the downloaded Malaysian legal corpus. Live smoke scripts also verify Gemini generation/embeddings, Qdrant writes/queries, and a complete two-round mediation/acceptance flow.
 
 ## Repository layout
 
 ```text
 app/                    React dApp and verification tool
 contracts/payproof/     Move package and unit tests
+backend/                Dispute API, legal RAG, AI orchestrator, and tests
+supabase/               Database/RLS/storage migration
+docs/                   Downloaded legal source files and RAG corpus
 .impeccable/            Design-system sidecar
 PRODUCT.md              Product intent and anti-references
 DESIGN.md               Normative visual system

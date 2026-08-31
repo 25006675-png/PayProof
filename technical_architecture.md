@@ -2,7 +2,9 @@
 
 ## System boundary
 
-PayProof is a client-side React application plus one generic Sui Move module. There is no application server, card-data handler, private order database, or privileged payment operator in this release.
+The payment release is a client-side React application plus one generic Sui Move module. The repository now also includes a separately deployable dispute backend and Supabase schema. There is still no card-data handler or privileged payment operator. The existing Move module is immediate settlement, not escrow; backend settlement outcomes cannot move funds until a separate audited escrow package exists.
+
+The dispute backend uses Supabase for authenticated durable aggregates and private evidence metadata, Qdrant for legal passage retrieval, and a bounded Gemini orchestration layer. AI recommendations are non-binding and immutable. The database uses optimistic versions and RLS, while the domain state machine enforces actor roles, exact asset-unit conservation, deadlines, round limits, and arbitration transitions.
 
 ```text
 Order form + wallet
