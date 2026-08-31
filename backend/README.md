@@ -1,6 +1,6 @@
 # PayProof dispute backend
 
-This service implements the off-chain dispute, negotiation, legal-RAG, and arbitration-package workflow. It deliberately does **not** claim to execute escrow: the currently deployed Move package pays the recipient immediately. Settlement allocations are instructions for a future audited escrow package.
+This service implements the off-chain dispute, negotiation, legal-RAG, and arbitration-package workflow. The version-2 Move deployment also provides a shared-object escrow: deliberation remains off-chain, while funding, approvals, allocation conservation, and the final receipt are enforced on Sui.
 
 ## Implemented flow
 
@@ -44,8 +44,11 @@ The AI uses two advocates and one neutral mediator/critic. The orchestrator perm
 - AI evidence and legal quotes must occur in the referenced source text. Unknown IDs, fabricated quotes, unsupported allocations, and unbalanced arithmetic produce a recorded safety abstention rather than an open proposal.
 - Human agreement creates `settlement_pending`. Only a trusted Sui verifier port can record transaction effects and advance the dispute to `settled`.
 - Aggregate writes use optimistic versions to prevent lost updates.
+- A bound Sui escrow object can back only one dispute; the Supabase partial unique index and memory-store check prevent settlement replay across aggregates.
 
 ## Local commands
+
+Use Node.js 22+ for the backend because the Sui gRPC SDK targets that runtime.
 
 ```powershell
 cd backend
@@ -69,7 +72,7 @@ The repository-root `.env` is ignored by Git. `.env.example` documents all varia
 The supplied publishable Supabase key is sufficient for browser/API authentication checks, but it cannot apply migrations or perform trusted backend writes. The supplied Gemini credential has now passed structured generation, single/batch embedding, focused legal-corpus ingestion, and a live two-round mediation. Remote Supabase deployment still requires:
 
 1. `SUPABASE_SECRET_KEY` (`sb_secret_...`) for the server, never the browser.
-2. A Supabase access token or dashboard SQL access to apply `supabase/migrations/202608310001_disputes.sql`.
+2. A Supabase access token or dashboard SQL access to apply `supabase/migrations/202608310001_disputes.sql`, `supabase/migrations/202608310002_settlement_pending.sql`, and `supabase/migrations/202608310003_unique_escrow_binding.sql`.
 3. The configured `GEMINI_API_KEY` to be installed as a protected production secret rather than copied into frontend variables.
 
 The long JWT supplied with the Qdrant endpoint authenticates successfully as the Qdrant API key; it is not a Gemini key.
@@ -81,9 +84,10 @@ npm run test:gemini
 npm run ingest:legal
 npm run test:qdrant
 npm run test:mediation
+npm run test:sui
 ```
 
-The focused ingestion selects 25 source-balanced, substantive passages from 150 verified chunks. Synchronization reuses unchanged content-hash IDs, embeds missing passages first, and deletes stale points only after successful upsert. The live mediation smoke test returned an explicit 6,000-unit buyer refund plus 24,000-unit supplier release, exact evidence/legal quotes, labelled inferences, and independently persisted party/mediator finals. The isolated suite currently contains 45 passing tests.
+The focused ingestion selects 25 source-balanced, substantive passages from 150 verified chunks. Synchronization reuses unchanged content-hash IDs, embeds missing passages first, and deletes stale points only after successful upsert. The live mediation smoke test returned an explicit 6,000-unit buyer refund plus 24,000-unit supplier release, exact evidence/legal quotes, labelled inferences, and independently persisted party/mediator finals. The isolated suite currently contains 51 passing tests, including five Sui gRPC verifier tests and escrow-binding replay protection.
 
 ## Demo progression API
 
@@ -97,7 +101,15 @@ Every transition returns an `executionKind`: `live_backend`, `live_ai_reference`
 
 ## Current Sui boundary
 
-`POST /v1/disputes/:id/settlement-execution` is disabled unless the server is constructed with a `SuiSettlementVerifier`. That verifier must read trusted Sui RPC transaction/object effects and confirm the package, escrow object, receipt object, and exact allocation. The deployed PayProof Move package currently performs immediate payment and is not an escrow package, so no production verifier is configured and the backend deliberately returns `503 SUI_ESCROW_UNAVAILABLE` instead of accepting a client-supplied digest as proof.
+`POST /v1/disputes/:id/settlement-execution` is enabled when `SUI_ESCROW_VERIFIER_ENABLED=true`. The server then uses the read-only gRPC verifier to re-read the funding, dispute, and settlement transactions plus the final shared receipt. It confirms the configured package, bound escrow and parties, exact disputed allocation, deleted escrow, created receipt, and receipt provenance; a client-supplied digest alone is never accepted. Disputes opened without `onchainEscrow` remain deliberately ineligible for execution confirmation.
+
+The deployed package is `0x4e1f7a3e99809622e2adbc379967eae7d7c26375378558594528810deddd6535` (testnet, version 2). Set `SUI_ESCROW_PACKAGE_ID` to another audited deployment before using a different network. `onchainEscrow` in the opening request must contain the package/object IDs, funding and dispute transaction digests, and the three wallet addresses; the verifier checks all of them against Sui events.
+
+`npm run test:sui` runs the complete API flow against the pinned public testnet
+escrow: open dispute, supplier counter-evidence, human proposal and both
+acceptances, then real gRPC verification of the finalized settlement receipt.
+Override the `SUI_LIVE_*` variables when testing another fixture. The script is
+read-only with respect to Sui; it never signs or submits a transaction.
 
 ## Legal corpus
 

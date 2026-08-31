@@ -22,6 +22,7 @@ vi.mock("@mysten/dapp-kit-react", () => ({
 }));
 
 import { PaymentWorkspace } from "./PaymentWorkspace";
+import { ASSETS, PAYPROOF_PACKAGE_ID } from "../config";
 import { calculateTotals, createProofPayload, hashProofPayload } from "../lib/order";
 import type { OrderDraft } from "../types";
 
@@ -75,7 +76,8 @@ async function successfulEvent() {
       digest: DIGEST,
       events: [
         {
-          eventType: "0x9::payproof::PaymentRecorded<0x2::sui::SUI>",
+          packageId: PAYPROOF_PACKAGE_ID,
+          eventType: `${PAYPROOF_PACKAGE_ID}::payproof::PaymentRecorded<${ASSETS.USDC.coinType}>`,
           json: {
             receipt_id: RECEIPT_ID,
             payer: PAYER,

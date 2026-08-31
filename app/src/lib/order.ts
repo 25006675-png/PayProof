@@ -11,7 +11,7 @@ import {
   isValidTransactionDigest,
   normalizeSuiAddress,
 } from "@mysten/sui/utils";
-import { ASSETS, NETWORK, PAYPROOF_PACKAGE_ID } from "../config";
+import { ASSETS, isTrustedPayProofPackageId, NETWORK } from "../config";
 
 const RECEIPT_STORAGE_KEY = "payproof.receipts.v1";
 
@@ -370,9 +370,7 @@ export function parseReceiptFile(raw: string): PayProofReceipt {
     !receipt.orderHash ||
     !isValidProofPayload(receipt.order) ||
     receipt.network !== NETWORK ||
-    !isSuiAddress(receipt.packageId ?? "") ||
-    normalizeSuiAddress(receipt.packageId ?? "0x0") !==
-      normalizeSuiAddress(PAYPROOF_PACKAGE_ID || "0x0") ||
+    !isTrustedPayProofPackageId(receipt.packageId ?? "") ||
     !isValidTransactionDigest(receipt.digest) ||
     !isSuiAddress(receipt.receiptId ?? "") ||
     !isSuiAddress(receipt.payer ?? "") ||

@@ -34,6 +34,16 @@ export class SupabaseDisputeStore implements DisputeStore {
     return aggregate;
   }
 
+  async findByEscrowObjectId(objectId: string): Promise<DisputeAggregate | undefined> {
+    const { data, error } = await this.client
+      .from("dispute_aggregates")
+      .select("aggregate")
+      .eq("aggregate->onchainEscrow->>escrowObjectId", objectId)
+      .maybeSingle();
+    if (error) throw new Error(`Supabase escrow lookup failed: ${error.message}`);
+    return data?.aggregate as DisputeAggregate | undefined;
+  }
+
   async save(dispute: DisputeAggregate, expectedVersion: number): Promise<void> {
     const { data, error } = await this.client.rpc("save_dispute_aggregate", {
       p_id: dispute.id,

@@ -10,4 +10,4 @@ npm run build
 npm run visual-check
 ```
 
-`VITE_PAYPROOF_PACKAGE_ID` may override the checked-in testnet deployment for controlled testing. Receipt verification deliberately rejects files from any package other than the configured package.
+`VITE_PAYPROOF_PACKAGE_ID` may override the checked-in testnet deployment for controlled testing. Receipt verification only trusts the configured deployment and the original type-origin package retained by Sui for upgraded `payproof` datatypes; arbitrary lookalike packages are rejected.

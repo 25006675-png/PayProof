@@ -11,6 +11,18 @@ export interface TokenVerifier { verify(token: string): Promise<Actor>; }
 const amount = z.string().regex(/^(0|[1-9]\d*)$/);
 const proposalSchema = z.object({ buyerUnits: amount, supplierUnits: amount, summary: z.string().min(1).max(2000), reasoning: z.string().max(10_000).optional() });
 const fileSchema = z.object({ storagePath: z.string().min(1), sha256: z.string().regex(/^[a-fA-F0-9]{64}$/), mimeType: z.string().min(1), sizeBytes: z.number().int().nonnegative().max(20 * 1024 * 1024) });
+const suiAddress = z.string().regex(/^0x[0-9a-fA-F]{1,64}$/);
+const suiObjectId = suiAddress;
+const transactionDigest = z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{20,128}$/);
+const onchainEscrowSchema = z.object({
+  packageId: suiObjectId,
+  escrowObjectId: suiObjectId,
+  fundingTransactionDigest: transactionDigest,
+  disputeTransactionDigest: transactionDigest,
+  buyerAddress: suiAddress,
+  supplierAddress: suiAddress,
+  arbitratorAddress: suiAddress,
+});
 const openSchema = z.object({
   id: z.string().uuid().optional(), orderId: z.string().min(1).max(128), buyerId: z.string().uuid(), supplierId: z.string().uuid(), arbitratorId: z.string().uuid(),
   assetType: z.string().min(1).max(256), totalEscrowUnits: amount, disputedUnits: amount, requestedBuyerUnits: amount,
@@ -18,6 +30,7 @@ const openSchema = z.object({
   tradeTerms: z.object({ orderReference: z.string().min(1), description: z.string().min(1), inspectionTerms: z.string().optional(), acceptanceTerms: z.string().optional(), remedyTerms: z.string().optional(), governingLaw: z.string().min(1) }),
   negotiationDeadline: z.string().datetime(), maxHumanRounds: z.number().int().min(1).max(5).optional(),
   evidenceStatement: z.string().min(1).max(20_000), evidenceFiles: z.array(fileSchema).max(20).optional(),
+  onchainEscrow: onchainEscrowSchema.optional(),
 });
 
 export function createApp(

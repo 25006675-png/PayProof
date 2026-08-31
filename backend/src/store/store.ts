@@ -3,6 +3,7 @@ import type { DisputeAggregate } from "../domain/types.js";
 export interface DisputeStore {
   create(dispute: DisputeAggregate): Promise<void>;
   get(id: string): Promise<DisputeAggregate | undefined>;
+  findByEscrowObjectId(objectId: string): Promise<DisputeAggregate | undefined>;
   save(dispute: DisputeAggregate, expectedVersion: number): Promise<void>;
 }
 
@@ -17,6 +18,13 @@ export class MemoryDisputeStore implements DisputeStore {
   async get(id: string): Promise<DisputeAggregate | undefined> {
     const result = this.disputes.get(id);
     return result ? structuredClone(result) : undefined;
+  }
+
+  async findByEscrowObjectId(objectId: string): Promise<DisputeAggregate | undefined> {
+    for (const dispute of this.disputes.values()) {
+      if (dispute.onchainEscrow?.escrowObjectId === objectId) return structuredClone(dispute);
+    }
+    return undefined;
   }
 
   async save(dispute: DisputeAggregate, expectedVersion: number): Promise<void> {

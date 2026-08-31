@@ -12,7 +12,11 @@ vi.mock("@mysten/dapp-kit-react", () => ({
 }));
 
 import { VerifyReceipt } from "./VerifyReceipt";
-import { ASSETS, PAYPROOF_PACKAGE_ID } from "../config";
+import {
+  ASSETS,
+  PAYPROOF_PACKAGE_ID,
+  PAYPROOF_TYPE_ORIGIN_PACKAGE_ID,
+} from "../config";
 import { calculateTotals, createProofPayload, hashProofPayload } from "../lib/order";
 import type { OrderDraft, PayProofReceipt } from "../types";
 
@@ -128,6 +132,27 @@ describe("receipt verification actions", () => {
       digest: DIGEST,
       include: { events: true },
     });
+  });
+
+  it("accepts the original type-origin event after a package upgrade", async () => {
+    const receipt = await makeReceipt();
+    chain.client.getTransaction.mockResolvedValue({
+      ...chainResult(receipt),
+      Transaction: {
+        ...chainResult(receipt).Transaction,
+        events: [
+          {
+            ...chainResult(receipt).Transaction.events[0],
+            eventType: `${PAYPROOF_TYPE_ORIGIN_PACKAGE_ID}::payproof::PaymentRecorded<${receipt.coinType}>`,
+          },
+        ],
+      },
+    });
+    render(<VerifyReceipt />);
+    const user = await upload(receipt);
+    await user.click(screen.getByRole("button", { name: /verify on sui/i }));
+
+    expect(await screen.findByText(/match exactly/i)).toBeVisible();
   });
 
   it("reports a mismatched on-chain payment amount", async () => {

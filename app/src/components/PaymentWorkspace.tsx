@@ -25,6 +25,8 @@ import { Transaction } from "@mysten/sui/transactions";
 import { normalizeSuiAddress } from "@mysten/sui/utils";
 import {
   ASSETS,
+  isPayProofPaymentRecordedType,
+  isTrustedPayProofPackageId,
   NETWORK,
   PAYPROOF_PACKAGE_ID,
   explorerObjectUrl,
@@ -268,8 +270,10 @@ export function PaymentWorkspace() {
         return;
       }
 
-      const event = indexed.Transaction.events?.find((item) =>
-        item.eventType.includes("::payproof::PaymentRecorded<"),
+      const event = indexed.Transaction.events?.find(
+        (item) =>
+          isPayProofPaymentRecordedType(item.eventType, asset.coinType) &&
+          (!item.packageId || isTrustedPayProofPackageId(item.packageId)),
       );
       const eventJson = (event?.json ?? {}) as PaymentEventJson;
       if (!eventJson.receipt_id) {

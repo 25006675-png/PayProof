@@ -135,6 +135,21 @@ export interface TradeTerms {
   governingLaw: string;
 }
 
+/**
+ * On-chain facts that bind an off-chain dispute to one escrow lifecycle.
+ * Clients may submit these after wallet-signed transactions finalize; the
+ * backend verifier re-reads each digest from Sui before recording settlement.
+ */
+export interface OnchainEscrowBinding {
+  packageId: string;
+  escrowObjectId: string;
+  fundingTransactionDigest: string;
+  disputeTransactionDigest: string;
+  buyerAddress: string;
+  supplierAddress: string;
+  arbitratorAddress: string;
+}
+
 export interface DisputeAggregate {
   id: string;
   orderId: string;
@@ -148,6 +163,7 @@ export interface DisputeAggregate {
   requestedBuyerUnits: string;
   claim: string;
   tradeTerms: TradeTerms;
+  onchainEscrow?: OnchainEscrowBinding;
   status: DisputeStatus;
   negotiationDeadline: string;
   maxHumanRounds: number;
@@ -177,6 +193,7 @@ export interface ArbitrationCasePackage {
     | "undisputedReleasedUnits"
     | "claim"
     | "tradeTerms"
+    | "onchainEscrow"
     | "negotiationDeadline"
     | "escalationReason"
   >;

@@ -4,6 +4,9 @@ import { fromBase64, normalizeStructTag } from "@mysten/sui/utils";
 
 const PACKAGE_ID =
   process.env.PAYPROOF_PACKAGE_ID ??
+  "0x4e1f7a3e99809622e2adbc379967eae7d7c26375378558594528810deddd6535";
+const HISTORICAL_PACKAGE_ID =
+  process.env.PAYPROOF_HISTORICAL_PACKAGE_ID ??
   "0xe736a1c424b9d608b42b2cb09925e537324e6f9f4ca7452d88d822c4c7824263";
 const PAYMENT_DIGEST =
   process.env.PAYPROOF_PAYMENT_DIGEST ??
@@ -42,11 +45,11 @@ if (recorded.FailedTransaction) {
   throw new Error(`Recorded payment failed: ${recorded.FailedTransaction.status.error?.message}`);
 }
 
-const expectedType = normalizeStructTag(
-  `${PACKAGE_ID}::payproof::PaymentRecorded<${SUI_TYPE}>`,
+const historicalExpectedType = normalizeStructTag(
+  `${HISTORICAL_PACKAGE_ID}::payproof::PaymentRecorded<${SUI_TYPE}>`,
 );
 const recordedEvent = recorded.Transaction.events?.find(
-  (event) => normalizeStructTag(event.eventType) === expectedType,
+  (event) => normalizeStructTag(event.eventType) === historicalExpectedType,
 );
 if (!recordedEvent) throw new Error("Recorded PaymentRecorded<SUI> event is missing.");
 
@@ -92,9 +95,15 @@ if (simulated.FailedTransaction) {
   );
 }
 const simulatedEvent = simulated.Transaction.events?.find(
-  (event) => normalizeStructTag(event.eventType) === expectedType,
+  (event) =>
+    normalizeStructTag(event.eventType) ===
+    normalizeStructTag(`${HISTORICAL_PACKAGE_ID}::payproof::PaymentRecorded<${SUI_TYPE}>`),
 );
-if (!simulatedEvent || simulatedEvent.json?.order_reference !== "APP-BUILDER-LIVE-SIM") {
+if (
+  !simulatedEvent ||
+  simulatedEvent.packageId !== PACKAGE_ID ||
+  simulatedEvent.json?.order_reference !== "APP-BUILDER-LIVE-SIM"
+) {
   throw new Error("The app transaction builder did not produce the expected event.");
 }
 

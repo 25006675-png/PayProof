@@ -25,7 +25,14 @@
 
 The earlier concept included supplier invitations, delivery tracking, escrow, inspections, partial release, disputes, and AI document/photo review. Those are valuable later phases, but combining them with first settlement would add identity, custody, notification, oracle, dispute-governance, and compliance surfaces before the core payment proof is validated.
 
-The agreed SME release therefore proves one narrow promise well: **pay the order and keep independently verifiable proof immediately**. Escrow and partial release should be a separate audited contract family with explicit deadlines and dispute authority, not hidden inside this direct-payment function.
+The immediate-payment path still proves one narrow promise well: **pay the order and keep independently verifiable proof immediately**. The dispute extension is a separate escrow contract family and backend workflow, not hidden inside this direct-payment function. Escrow funding, partial release, evidence, negotiation, and arbitration therefore have their own identity, custody, deadline, and threat-model boundaries.
+
+## Dispute and escrow extension
+
+1. A buyer opens a claim with a structured statement and evidence metadata; the supplier can agree or submit counter-evidence.
+2. Once both sides have evidence, bounded Gemini advocates and a neutral mediator retrieve curated Malaysian legal passages from Qdrant and produce one cited, non-binding proposal. Intermediate agent reasoning is not persisted.
+3. Humans may accept, reject, or counter a proposal for a bounded number of rounds. A fixed deadline closes negotiation; unresolved cases become an arbitration package. Matching independent positions can settle early.
+4. A human agreement or arbitrator instruction becomes `settlement_pending`; it never implies that funds moved. The client submits wallet-signed escrow transactions, and the backend accepts a settlement digest only after its configured Sui gRPC verifier confirms package, parties, events, conservation, escrow deletion, and receipt provenance.
 
 ## External integration boundary
 

@@ -8,6 +8,7 @@ import {
   type DomainContext,
   type EvidenceFile,
   type MediationRun,
+  type OnchainEscrowBinding,
   type PartySide,
   type Proposal,
   type SettlementExecution,
@@ -31,6 +32,7 @@ export interface OpenDisputeInput {
   maxHumanRounds?: number;
   evidenceStatement: string;
   evidenceFiles?: EvidenceFile[];
+  onchainEscrow?: OnchainEscrowBinding;
 }
 
 export interface ProposalInput extends SettlementAllocation {
@@ -157,7 +159,9 @@ export function openDispute(input: OpenDisputeInput, actor: Actor, ctx: DomainCo
     supplierId: input.supplierId, arbitratorId: input.arbitratorId, assetType: input.assetType,
     totalEscrowUnits: total.toString(), disputedUnits: disputed.toString(),
     undisputedReleasedUnits: (total - disputed).toString(), requestedBuyerUnits: requested.toString(),
-    claim: input.claim.trim(), tradeTerms: input.tradeTerms, status: "supplier_review",
+    claim: input.claim.trim(), tradeTerms: input.tradeTerms,
+    onchainEscrow: input.onchainEscrow ? structuredClone(input.onchainEscrow) : undefined,
+    status: "supplier_review",
     negotiationDeadline: deadline.toISOString(), maxHumanRounds, currentRound: 0,
     evidence: [{ id: ctx.id(), side: "buyer", statement: input.evidenceStatement.trim(), files, submittedAt: now }],
     proposals: [], mediationRuns: [], earlyPositions: {}, audit: [], version: 0, createdAt: now, updatedAt: now,
@@ -375,7 +379,9 @@ export function buildArbitrationPackage(dispute: DisputeAggregate, ctx: DomainCo
       id: dispute.id, orderId: dispute.orderId, assetType: dispute.assetType,
       totalEscrowUnits: dispute.totalEscrowUnits, disputedUnits: dispute.disputedUnits,
       undisputedReleasedUnits: dispute.undisputedReleasedUnits, claim: dispute.claim,
-      tradeTerms: dispute.tradeTerms, negotiationDeadline: dispute.negotiationDeadline,
+      tradeTerms: dispute.tradeTerms,
+      onchainEscrow: dispute.onchainEscrow,
+      negotiationDeadline: dispute.negotiationDeadline,
       escalationReason: dispute.escalationReason,
     },
     evidence: structuredClone(dispute.evidence),

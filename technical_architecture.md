@@ -2,22 +2,21 @@
 
 ## System boundary
 
-The payment release is a client-side React application plus one generic Sui Move module. The repository now also includes a separately deployable dispute backend and Supabase schema. There is still no card-data handler or privileged payment operator. The existing Move module is immediate settlement, not escrow; backend settlement outcomes cannot move funds until a separate audited escrow package exists.
+The release has two deliberately separated paths: a client-side React payment application and a separately deployable dispute backend. The Sui package contains the original immediate-payment module plus a generic shared-object escrow module. Supabase stores private dispute aggregates and evidence metadata, Qdrant stores the curated legal index, and Gemini supplies bounded non-binding analysis. There is still no card-data handler or privileged payment operator; wallets sign payment/escrow transactions, while the backend only verifies finalized Sui effects.
 
 The dispute backend uses Supabase for authenticated durable aggregates and private evidence metadata, Qdrant for legal passage retrieval, and a bounded Gemini orchestration layer. AI recommendations are non-binding and immutable. The database uses optimistic versions and RLS, while the domain state machine enforces actor roles, exact asset-unit conservation, deadlines, round limits, and arbitration transitions.
 
 ```text
-Order form + wallet
-        |
-        | one programmable transaction
-        v
-payproof::pay<T> -----> Coin<T> to SME
-        |
-        +-------------> PaymentReceipt<T> to payer
-        |
-        +-------------> PaymentRecorded<T> event
+Immediate payment:  Order form + wallet --PTB--> payproof::pay<T>
+                                         |--> Coin<T> to SME
+                                         |--> PaymentReceipt<T> to payer
+                                         `--> PaymentRecorded<T> event
 
-Receipt JSON --local SHA-256--> pinned event + transaction lookup
+Disputed order:    client wallet --PTBs--> shared Escrow<T>
+                   backend evidence + legal RAG + bounded agents
+                              --agreement--> buyer/supplier/arbitrator approvals
+                   client wallet --PTB--> SettlementReceipt<T> + exact payouts
+                   backend gRPC verifier --proof--> settled dispute record
 ```
 
 ## On-chain contract
@@ -32,6 +31,17 @@ Receipt JSON --local SHA-256--> pinned event + transaction lookup
 6. transfers the receipt to the payer.
 
 Move transaction atomicity means an abort rolls back every step. The module never holds funds and has no admin withdrawal path.
+
+The `payproof::escrow` module is a separate stateful contract family in the same
+version-2 deployment. `create<T>` shares an escrow with buyer, supplier, and
+designated arbitrator identities plus the private order commitment. The buyer
+can freeze only a disputed amount; `release_undisputed<T>` pays the supplier the
+remaining balance. Parties approve an exact buyer-refund/supplier-release split,
+or the arbitrator approves one when escalation has occurred. `execute_settlement`
+conserves the disputed balance, deletes the escrow, pays both destinations, and
+shares an immutable `SettlementReceipt<T>`. The backend never signs or holds
+these funds; its gRPC verifier re-reads the funding, dispute, settlement, and
+receipt effects before marking an off-chain agreement settled.
 
 ## Private receipt commitment
 
@@ -61,7 +71,7 @@ The submitted digest is retained before indexing begins. This prevents a tempora
 
 ## Verification trust model
 
-The verifier does not trust arbitrary JSON. It validates the complete receipt schema, arithmetic, field limits, Sui addresses, transaction digest, asset/coin pairing, amount units, commitment nonce, network, and known package ID. It recalculates the local commitment and then requires one exact `PaymentRecorded<coinType>` event whose receipt ID, payer, recipient, amount, order commitment, order reference, and timestamp all match.
+The verifier does not trust arbitrary JSON. It validates the complete receipt schema, arithmetic, field limits, Sui addresses, transaction digest, asset/coin pairing, amount units, commitment nonce, network, and the configured package deployment. Because Sui retains a module's original type origin across upgrades, it also allowlists the original `payproof` package ID for legacy event/object types; this does not allow arbitrary packages. It recalculates the local commitment and then requires one exact `PaymentRecorded<coinType>` event whose receipt ID, payer, recipient, amount, order commitment, order reference, and timestamp all match.
 
 This package pin prevents a malicious file from pointing at a lookalike contract. Event bytes accept the Base64 representation returned by current Sui gRPC as well as byte arrays used in isolated tests.
 
@@ -77,4 +87,4 @@ This package pin prevents a malicious file from pointing at a lookalike contract
 - Browser local storage is convenience history, not durable accounting storage; the JSON download is the portable record.
 - A production deployment should add organization authentication, encrypted/managed receipt storage, backups, observability, a dedicated Sui node provider, and legal/compliance review.
 - Mainnet requires a separately published and audited package, mainnet USDC pinning, production RPC, card/on-ramp contracts, and operational key management.
-- Escrow, milestones, delivery proofs, disputes, and partial releases require new stateful contracts and independent threat modeling.
+- Delivery proofs, multimodal evidence extraction, formal escrow deadlines, and production arbitrator governance require independent threat modeling before mainnet.

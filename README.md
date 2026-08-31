@@ -2,12 +2,13 @@
 
 PayProof is a Sui testnet payment application for SMEs: enter a detailed order, settle it atomically in SUI or testnet USDC, download a privacy-preserving receipt, and independently verify the receipt against Sui.
 
-The repository now also contains the first backend vertical slice for bounded, cited dispute mediation: buyer and supplier evidence, immutable settlement proposals, three human negotiation rounds, deadline escalation, and a structured human-arbitration package. See [backend/README.md](./backend/README.md). This backend records settlement instructions; a new audited Sui escrow contract is still required before it can control real funds.
+The repository also contains the bounded, cited dispute-mediation backend and a shared-object Sui escrow package. Deliberation, evidence, legal retrieval, and negotiation stay off-chain; only the escrow balance, approvals, and final receipt are settled on-chain. See [backend/README.md](./backend/README.md).
 
 ## Live testnet deployment
 
-- Package: [`0xe736a1c424b9d608b42b2cb09925e537324e6f9f4ca7452d88d822c4c7824263`](https://suiscan.xyz/testnet/object/0xe736a1c424b9d608b42b2cb09925e537324e6f9f4ca7452d88d822c4c7824263)
+- Package (v2, escrow + payment): [`0x4e1f7a3e99809622e2adbc379967eae7d7c26375378558594528810deddd6535`](https://suiscan.xyz/testnet/object/0x4e1f7a3e99809622e2adbc379967eae7d7c26375378558594528810deddd6535)
 - Publish transaction: [`HADDGD23v9ULc69C5imbrp9KqLXEB4Y1pW6oP29Jm1Ro`](https://suiscan.xyz/testnet/tx/HADDGD23v9ULc69C5imbrp9KqLXEB4Y1pW6oP29Jm1Ro)
+- Escrow upgrade transaction: [`HgPr1R4tAAAymS3SV4VdUoQSw61m17RXnJf5GCihVKqf`](https://suiscan.xyz/testnet/tx/HgPr1R4tAAAymS3SV4VdUoQSw61m17RXnJf5GCihVKqf)
 - Executed 0.01 SUI proof payment: [`ANKPvWAu42wM9QgaxVSezK2qSBj24ThUKdmaAJRB8oJu`](https://suiscan.xyz/testnet/tx/ANKPvWAu42wM9QgaxVSezK2qSBj24ThUKdmaAJRB8oJu)
 - Created receipt object: [`0x9928ff5e76d21c7ddc430c995fbfdf4ef0fbaae4e040bdc265a0652674bb7e43`](https://suiscan.xyz/testnet/object/0x9928ff5e76d21c7ddc430c995fbfdf4ef0fbaae4e040bdc265a0652674bb7e43)
 
@@ -15,7 +16,8 @@ The real transaction exposed Sui’s Base64 event encoding for `vector<u8>`; the
 
 ## Run locally
 
-Requirements: Node.js 20+ and a current Sui CLI.
+Requirements: Node.js 20+ for the browser app, Node.js 22+ for the backend
+(the Sui gRPC SDK requires it), and a current Sui CLI.
 
 ```powershell
 cd app
@@ -44,11 +46,18 @@ npm run test:testnet
 
 # Desktop/mobile overflow, labels, console errors, and automated WCAG checks
 npm run visual-check
+
+# Dispute backend unit/integration suite and real testnet escrow route
+cd ../backend
+npm test
+npm run build
+$env:NODE_OPTIONS='--use-system-ca'
+npm run test:sui
 ```
 
-Current automated coverage: 6 Move cases and 26 frontend cases. See [simplified_flow.md](./simplified_flow.md), [technical_architecture.md](./technical_architecture.md), [PRODUCT.md](./PRODUCT.md), and [DESIGN.md](./DESIGN.md).
+Current automated coverage: 10 Move cases and the frontend/backend suites. See [simplified_flow.md](./simplified_flow.md), [technical_architecture.md](./technical_architecture.md), [PRODUCT.md](./PRODUCT.md), and [DESIGN.md](./DESIGN.md).
 
-The dispute backend adds 32 tests covering authorization, evidence gates, immutable proposals, exact money conservation, deadline boundaries, negotiation caps, AI abstention, citation/evidence-ID validation, arbitration, concurrency, HTTP behavior, focused corpus selection, and retrieval from the downloaded Malaysian legal corpus. Live smoke scripts also verify Gemini generation/embeddings, Qdrant writes/queries, and a complete two-round mediation/acceptance flow.
+The dispute backend has 51 tests covering authorization, evidence gates, immutable proposals, exact money conservation, deadline boundaries, negotiation caps, AI abstention, citation/evidence-ID validation, arbitration, concurrency, HTTP behavior, focused corpus selection, retrieval from the downloaded Malaysian legal corpus, Sui settlement-proof verification, and escrow-binding replay protection. Live smoke scripts also verify Gemini generation/embeddings, Qdrant writes/queries, a complete two-round mediation/acceptance flow, and the full API-to-testnet settlement route.
 
 ## Repository layout
 

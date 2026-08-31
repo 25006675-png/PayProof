@@ -10,10 +10,13 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import {
-  normalizeStructTag,
   normalizeSuiAddress,
 } from "@mysten/sui/utils";
-import { explorerTransactionUrl } from "../config";
+import {
+  explorerTransactionUrl,
+  isPayProofPaymentRecordedType,
+  isTrustedPayProofPackageId,
+} from "../config";
 import {
   eventBytesToHex,
   hashProofPayload,
@@ -83,11 +86,10 @@ export function VerifyReceipt() {
       if (result.FailedTransaction) {
         throw new Error("The referenced Sui transaction did not succeed.");
       }
-      const expectedEventType = normalizeStructTag(
-        `${receipt.packageId}::payproof::PaymentRecorded<${receipt.coinType}>`,
-      );
       const event = result.Transaction.events?.find(
-        (item) => normalizeStructTag(item.eventType) === expectedEventType,
+        (item) =>
+          isPayProofPaymentRecordedType(item.eventType, receipt.coinType) &&
+          (!item.packageId || isTrustedPayProofPackageId(item.packageId)),
       );
       if (!event) throw new Error("No matching PayProof event exists in this transaction.");
 

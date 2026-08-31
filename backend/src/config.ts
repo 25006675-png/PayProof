@@ -25,5 +25,9 @@ export const config = {
   store: process.env.BACKEND_STORE ?? "memory",
   port: Number(process.env.PORT ?? 8787),
   demoMode: process.env.PAYPROOF_DEMO_MODE === "true",
+  suiEscrowVerifierEnabled: process.env.SUI_ESCROW_VERIFIER_ENABLED === "true",
+  suiNetwork: process.env.SUI_NETWORK ?? "testnet",
+  suiRpcUrl: process.env.SUI_RPC_URL ?? "https://fullnode.testnet.sui.io:443",
+  suiEscrowPackageId: process.env.SUI_ESCROW_PACKAGE_ID ?? "0x4e1f7a3e99809622e2adbc379967eae7d7c26375378558594528810deddd6535",
   corpusDir: path.resolve(here, "../../docs/corpus"),
 };

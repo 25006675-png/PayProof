@@ -14,7 +14,11 @@ import {
   validateOrderDraft,
 } from "./order";
 import type { OrderDraft, PayProofReceipt } from "../types";
-import { ASSETS, PAYPROOF_PACKAGE_ID } from "../config";
+import {
+  ASSETS,
+  PAYPROOF_PACKAGE_ID,
+  PAYPROOF_TYPE_ORIGIN_PACKAGE_ID,
+} from "../config";
 
 const PAYER = `0x${"a".repeat(64)}`;
 const RECIPIENT = `0x${"b".repeat(64)}`;
@@ -141,6 +145,11 @@ describe("order proof utilities", () => {
     };
 
     expect(parseReceiptFile(JSON.stringify(receipt))).toEqual(receipt);
+    expect(
+      parseReceiptFile(
+        JSON.stringify({ ...receipt, packageId: PAYPROOF_TYPE_ORIGIN_PACKAGE_ID }),
+      ).packageId,
+    ).toBe(PAYPROOF_TYPE_ORIGIN_PACKAGE_ID);
     expect(() =>
       parseReceiptFile(JSON.stringify({ ...receipt, packageId: PAYER })),
     ).toThrow(/not a valid/);

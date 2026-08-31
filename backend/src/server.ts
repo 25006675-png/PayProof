@@ -6,6 +6,7 @@ import { config } from "./config.js";
 import { DemoOrderService } from "./demo/demo-service.js";
 import { GeminiEmbedder, GeminiJsonModel } from "./integrations/gemini.js";
 import { QdrantLegalIndex } from "./integrations/qdrant.js";
+import { createSuiSettlementVerifier } from "./integrations/sui-settlement.js";
 import { DisputeService, systemContext } from "./service/dispute-service.js";
 import { MemoryDisputeStore } from "./store/store.js";
 import { SupabaseDisputeStore } from "./store/supabase-store.js";
@@ -22,5 +23,8 @@ if (process.env.GEMINI_API_KEY) {
   mediator = new MediationOrchestrator(new GeminiJsonModel(config.geminiApiKey(), config.geminiModel), retriever, systemContext);
 }
 const demo = config.demoMode ? new DemoOrderService(systemContext) : undefined;
-const app = createApp(service, verifier, mediator, demo);
+const settlementVerifier = config.suiEscrowVerifierEnabled
+  ? createSuiSettlementVerifier({ packageId: config.suiEscrowPackageId, network: config.suiNetwork, baseUrl: config.suiRpcUrl })
+  : undefined;
+const app = createApp(service, verifier, mediator, demo, settlementVerifier);
 serve({ fetch: app.fetch, port: config.port }, ({ port }) => console.log(`PayProof dispute backend listening on http://localhost:${port}`));
