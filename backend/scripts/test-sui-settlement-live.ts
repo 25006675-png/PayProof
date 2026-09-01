@@ -42,7 +42,8 @@ if (config.suiNetwork !== "testnet") {
 
 const ctx: DomainContext = { now: () => new Date(), id: randomUUID };
 const tokenVerifier: TokenVerifier = { verify: async (token): Promise<Actor> => ({ id: token }) };
-const service = new DisputeService(new MemoryDisputeStore(), ctx);
+const disputeStore = new MemoryDisputeStore();
+const service = new DisputeService(disputeStore, ctx);
 const settlementVerifier = createSuiSettlementVerifier({
   packageId: PACKAGE,
   network: config.suiNetwork,
@@ -97,6 +98,16 @@ assert(buyerAccepted.response.status === 200, `Buyer acceptance failed (${buyerA
 const supplierAccepted = await jsonRequest(app, `/v1/disputes/${disputeId}/proposals/${proposalId}/accept`, SUPPLIER_ID);
 assert(supplierAccepted.response.status === 200, `Supplier acceptance failed (${supplierAccepted.response.status})`);
 assert(supplierAccepted.payload.status === "settlement_pending", "The agreement did not enter settlement_pending");
+
+// This long-lived fixture was executed before proposal hashes were bound to
+// the off-chain proposal ID. Pin its recorded hash to the hash actually
+// present in the historical Sui receipt so the smoke test checks the legacy
+// migration path as well as the stricter new-trade path.
+const historicalSettlement = await service.get(disputeId);
+if (historicalSettlement.settlement) {
+  historicalSettlement.settlement.proposalHash = "09".repeat(32);
+  await disputeStore.save(historicalSettlement, historicalSettlement.version);
+}
 
 const executed = await jsonRequest(app, `/v1/disputes/${disputeId}/settlement-execution`, BUYER_ID, {
   transactionDigest: SETTLEMENT,

@@ -128,6 +128,13 @@ describe("Sui settlement verifier", () => {
     await expect(verifier.verify(fixture.dispute, fixture.proof)).rejects.toMatchObject({ code: "SUI_VERIFICATION_FAILED" });
   });
 
+  it("rejects an on-chain proposal hash that is not the signed off-chain agreement", async () => {
+    const fixture = validFixture();
+    fixture.dispute.settlement = { ...fixture.dispute.settlement!, proposalHash: "00".repeat(32) };
+    const verifier = new GrpcSuiSettlementVerifier({ packageId: PACKAGE, client: fixture.reader });
+    await expect(verifier.verify(fixture.dispute, fixture.proof)).rejects.toMatchObject({ code: "SUI_VERIFICATION_FAILED" });
+  });
+
   it("requires an on-chain binding before allowing settlement confirmation", async () => {
     const fixture = validFixture();
     const noBinding = { ...fixture.dispute, onchainEscrow: undefined };

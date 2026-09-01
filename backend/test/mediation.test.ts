@@ -123,6 +123,16 @@ describe("bounded AI mediation", () => {
     expect(result.run.validationIssues.join(" ")).toContain("unknown evidence");
   });
 
+  it("repairs a model legal quote that accidentally copied a trade term", async () => {
+    const invalid = advocate("15000");
+    invalid.legalBasis[0]!.quote = "Parties should first attempt repair or a proportionate refund.";
+    const model = new QueueModel([invalid, advocate("15000"), advocate("15000"), proposal("15000")]);
+    const { control, dispute } = disputeFixture();
+    const result = await new MediationOrchestrator(model, retriever, control.ctx).mediate(dispute);
+    expect(result.outcome).toBe("proposal");
+    expect(result).toMatchObject({ debateRounds: 1, modelCalls: 4 });
+  });
+
   it("rejects a fabricated quote even when it points at a real evidence ID", async () => {
     const fabricated = advocate("10000");
     fabricated.evidenceBasis[0]!.quote = "Buyer refused every independent inspection request.";

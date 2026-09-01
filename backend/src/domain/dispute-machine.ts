@@ -113,11 +113,14 @@ function agreeSettlement(
 ): DisputeAggregate {
   validateAllocation(allocation, dispute.disputedUnits);
   dispute.status = "settlement_pending";
+  const agreementId = ctx.id();
+  const signedIdentifier = proposalId ?? agreementId;
   dispute.settlement = {
     ...allocation,
     source,
     proposalId,
-    agreementId: ctx.id(),
+    proposalHash: createHash("sha256").update(signedIdentifier).digest("hex"),
+    agreementId,
     evidenceBundleHash: evidenceBundleHash(dispute),
     agreedAt: ctx.now().toISOString(),
     executionStatus: "pending_on_chain",

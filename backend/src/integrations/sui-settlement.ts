@@ -91,6 +91,14 @@ function text(value: unknown, field: string): string {
   return value;
 }
 
+function vectorBytes(value: unknown): string {
+  if (Array.isArray(value)) return Buffer.from(value.map((item) => Number(item))).toString("hex");
+  if (typeof value === "string") {
+    try { return Buffer.from(value, "base64").toString("hex"); } catch { return value.replace(/^0x/, "").toLowerCase(); }
+  }
+  return "";
+}
+
 function eventData(event: any, field: string): Record<string, unknown> {
   return record(event?.json ?? event?.parsedJson, field);
 }
@@ -281,6 +289,7 @@ export class GrpcSuiSettlementVerifier implements SuiSettlementVerifier {
     const requestedBuyerUnits = units(dispute.requestedBuyerUnits, "requestedBuyerUnits");
     const agreedBuyerRefund = units(agreement.buyerUnits, "settlement.buyerUnits");
     const agreedSupplierRelease = units(agreement.supplierUnits, "settlement.supplierUnits");
+    const expectedProposalHash = agreement.proposalHash?.toLowerCase();
     if (
       !sameObjectId(settlementData.escrow_id, escrowObjectId) ||
       !sameObjectId(settlementData.receipt_id, receiptObjectId) ||
@@ -290,6 +299,7 @@ export class GrpcSuiSettlementVerifier implements SuiSettlementVerifier {
       supplierRelease !== agreedSupplierRelease ||
       buyerRefund > requestedBuyerUnits ||
       buyerRefund + supplierRelease !== disputedUnits ||
+      (expectedProposalHash && vectorBytes(settlementData.proposal_hash) !== expectedProposalHash) ||
       !deletedObject(settlementTx, escrowObjectId) ||
       !createdObjectHasType(settlementTx, receiptObjectId, receiptType)
     ) {
@@ -314,7 +324,8 @@ export class GrpcSuiSettlementVerifier implements SuiSettlementVerifier {
       units(receiptData.buyer_refund, "SettlementReceipt.buyer_refund") !== buyerRefund ||
       units(receiptData.supplier_release, "SettlementReceipt.supplier_release") !== supplierRelease ||
       text(receiptData.order_hash, "SettlementReceipt.order_hash") !== text(fundingData.order_hash, "EscrowCreated.order_hash") ||
-      text(receiptData.proposal_hash, "SettlementReceipt.proposal_hash") !== text(settlementData.proposal_hash, "SettlementExecuted.proposal_hash")
+      text(receiptData.proposal_hash, "SettlementReceipt.proposal_hash") !== text(settlementData.proposal_hash, "SettlementExecuted.proposal_hash") ||
+      (expectedProposalHash && vectorBytes(receiptData.proposal_hash) !== expectedProposalHash)
     ) {
       fail("SUI_VERIFICATION_FAILED", "The receipt fields do not match the verified settlement event");
     }

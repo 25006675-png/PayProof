@@ -26,7 +26,9 @@ designated arbitrator instruction --------------> settlement agreement (pending 
 trusted Sui effect verifier ----------------------------> settled receipt
 ```
 
-The AI uses two advocates and one neutral mediator/critic. The orchestrator permits at most two internal debate rounds and five model calls. It stops after one round when positions converge. `abstain` is a valid result when evidence or verified authority is inadequate. Final agent records contain structured outputs, exact evidence/legal quotes, labelled inferences, and neutral open questions—not hidden chain-of-thought.
+The AI uses two advocates and one neutral mediator/critic. The orchestrator permits at most two internal debate rounds and eight model calls, including bounded citation-repair retries. It stops after one round when positions converge. `abstain` is a valid result when evidence or verified authority is inadequate. Final agent records contain structured outputs, exact evidence/legal quotes, labelled inferences, and neutral open questions—not hidden chain-of-thought.
+
+The trade API wraps this state machine with order creation, line-item terms, hashed seven-day supplier invites, supplier wallet binding, Sui funding verification, shipment/delivery checkpoints, undisputed-balance release, and order-status synchronization. See the `/v1/orders`, `/v1/invites/:token/accept`, and `/v1/orders/:id/undisputed-release` routes in `src/api/app.ts`.
 
 ## Safety invariants
 
@@ -59,7 +61,7 @@ npm run check:services
 npm start
 ```
 
-On a Windows host where Node does not automatically trust the system certificate store, prefix network commands with:
+The backend start/dev and live-network npm scripts enable Node's system certificate store automatically. For a one-off direct `tsx` invocation on a Windows host where Node does not automatically trust the system certificate store, use:
 
 ```powershell
 $env:NODE_OPTIONS='--use-system-ca'
@@ -72,7 +74,7 @@ The repository-root `.env` is ignored by Git. `.env.example` documents all varia
 The supplied publishable Supabase key is sufficient for browser/API authentication checks, but it cannot apply migrations or perform trusted backend writes. The supplied Gemini credential has now passed structured generation, single/batch embedding, focused legal-corpus ingestion, and a live two-round mediation. Remote Supabase deployment still requires:
 
 1. `SUPABASE_SECRET_KEY` (`sb_secret_...`) for the server, never the browser.
-2. A Supabase access token or dashboard SQL access to apply `supabase/migrations/202608310001_disputes.sql`, `supabase/migrations/202608310002_settlement_pending.sql`, and `supabase/migrations/202608310003_unique_escrow_binding.sql`.
+2. A Supabase access token or dashboard SQL access to apply the existing dispute migrations plus `supabase/migrations/202609010001_trade_orders.sql`.
 3. The configured `GEMINI_API_KEY` to be installed as a protected production secret rather than copied into frontend variables.
 
 The long JWT supplied with the Qdrant endpoint authenticates successfully as the Qdrant API key; it is not a Gemini key.
@@ -87,7 +89,7 @@ npm run test:mediation
 npm run test:sui
 ```
 
-The focused ingestion selects 25 source-balanced, substantive passages from 150 verified chunks. Synchronization reuses unchanged content-hash IDs, embeds missing passages first, and deletes stale points only after successful upsert. The live mediation smoke test returned an explicit 6,000-unit buyer refund plus 24,000-unit supplier release, exact evidence/legal quotes, labelled inferences, and independently persisted party/mediator finals. The isolated suite currently contains 51 passing tests, including five Sui gRPC verifier tests and escrow-binding replay protection.
+The focused ingestion selects 25 source-balanced, substantive passages from 150 verified chunks. Synchronization reuses unchanged content-hash IDs, embeds missing passages first, and deletes stale points only after successful upsert. The live mediation smoke test returned an explicit 6,000-unit buyer refund plus 24,000-unit supplier release, exact evidence/legal quotes, labelled inferences, and independently persisted party/mediator finals. The isolated suite currently contains 60 passing tests, including Sui funding/settlement gRPC verifier tests, invite replay protection, email-bound invite identity, direct supplier agreement, citation-repair regression, and escrow-binding replay protection.
 
 ## Demo progression API
 
@@ -101,7 +103,7 @@ Every transition returns an `executionKind`: `live_backend`, `live_ai_reference`
 
 ## Current Sui boundary
 
-`POST /v1/disputes/:id/settlement-execution` is enabled when `SUI_ESCROW_VERIFIER_ENABLED=true`. The server then uses the read-only gRPC verifier to re-read the funding, dispute, and settlement transactions plus the final shared receipt. It confirms the configured package, bound escrow and parties, exact disputed allocation, deleted escrow, created receipt, and receipt provenance; a client-supplied digest alone is never accepted. Disputes opened without `onchainEscrow` remain deliberately ineligible for execution confirmation.
+`POST /v1/orders/:id/funding` independently re-reads the buyer's `EscrowCreated` event before recording a funded order. `POST /v1/orders/:id/undisputed-release` performs the same check for the supplier's `UndisputedReleased` event. `POST /v1/disputes/:id/settlement-execution` is enabled when `SUI_ESCROW_VERIFIER_ENABLED=true`; the server then uses the read-only gRPC verifier to re-read the funding, dispute, and settlement transactions plus the final shared receipt. It confirms the configured package, bound escrow and parties, exact disputed allocation, deleted escrow, created receipt, receipt provenance, and (for new agreements) the SHA-256 proposal/agreement hash; a client-supplied digest alone is never accepted. Disputes opened without `onchainEscrow` remain deliberately ineligible for execution confirmation.
 
 The deployed package is `0x4e1f7a3e99809622e2adbc379967eae7d7c26375378558594528810deddd6535` (testnet, version 2). Set `SUI_ESCROW_PACKAGE_ID` to another audited deployment before using a different network. `onchainEscrow` in the opening request must contain the package/object IDs, funding and dispute transaction digests, and the three wallet addresses; the verifier checks all of them against Sui events.
 

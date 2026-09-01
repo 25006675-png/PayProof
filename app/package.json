@@ -8,7 +8,7 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:testnet": "node scripts/check-testnet.mjs",
+    "test:testnet": "node --use-system-ca scripts/check-testnet.mjs",
     "visual-check": "node scripts/visual-check.mjs"
   },
   "dependencies": {

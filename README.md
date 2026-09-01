@@ -51,13 +51,12 @@ npm run visual-check
 cd ../backend
 npm test
 npm run build
-$env:NODE_OPTIONS='--use-system-ca'
 npm run test:sui
 ```
 
-Current automated coverage: 10 Move cases and the frontend/backend suites. See [simplified_flow.md](./simplified_flow.md), [technical_architecture.md](./technical_architecture.md), [PRODUCT.md](./PRODUCT.md), and [DESIGN.md](./DESIGN.md).
+Current automated coverage: 10 Move cases, 27 frontend tests, and 60 backend tests. See [simplified_flow.md](./simplified_flow.md), [technical_architecture.md](./technical_architecture.md), [PRODUCT.md](./PRODUCT.md), and [DESIGN.md](./DESIGN.md).
 
-The dispute backend has 51 tests covering authorization, evidence gates, immutable proposals, exact money conservation, deadline boundaries, negotiation caps, AI abstention, citation/evidence-ID validation, arbitration, concurrency, HTTP behavior, focused corpus selection, retrieval from the downloaded Malaysian legal corpus, Sui settlement-proof verification, and escrow-binding replay protection. Live smoke scripts also verify Gemini generation/embeddings, Qdrant writes/queries, a complete two-round mediation/acceptance flow, and the full API-to-testnet settlement route.
+The dispute backend has 60 tests covering authorization, evidence gates, immutable proposals, exact money conservation, deadline boundaries, negotiation caps, AI abstention, citation/evidence-ID validation, bounded citation repair, email-bound invite identity, arbitration, concurrency, HTTP behavior, focused corpus selection, retrieval from the downloaded Malaysian legal corpus, Sui funding/settlement-proof verification, and escrow-binding replay protection. Live smoke scripts also verify Gemini generation/embeddings, Qdrant writes/queries, a complete two-round mediation/acceptance flow, and the full API-to-testnet settlement route.
 
 ## Repository layout
 
@@ -71,6 +70,12 @@ docs/                   Downloaded legal source files and RAG corpus
 PRODUCT.md              Product intent and anti-references
 DESIGN.md               Normative visual system
 ```
+
+## Connected trade flow
+
+The `/workspace` route now contains the end-to-end trade console. A buyer creates an order with line items and delivery terms, shares a single-use hashed invite, and the supplier accepts it from another session. The buyer's wallet creates the shared Sui escrow; the backend rereads the `EscrowCreated` transaction before recording funding. After delivery, a buyer claim and supplier counter-evidence open the bounded legal-RAG mediation flow. The supplier can release the undisputed portion, both parties approve the same allocation, and the backend verifies the final Sui receipt before marking the case settled.
+
+Google identity and card top-up are visibly simulated only when the demo route is used. Configure Supabase Google OAuth for real sign-in; do not put a Supabase secret/service-role key in the browser. Apply `supabase/migrations/202609010001_trade_orders.sql` and set `BACKEND_STORE=supabase` for durable order aggregates.
 
 ## Production boundary
 

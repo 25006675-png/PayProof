@@ -231,7 +231,7 @@ export class MediationOrchestrator {
     private readonly model: JsonModel,
     private readonly retriever: LegalRetriever,
     private readonly ctx: DomainContext,
-    private readonly options: { maxDebateRounds: 1 | 2; maxModelCalls: number; totalTimeMs: number } = { maxDebateRounds: 2, maxModelCalls: 5, totalTimeMs: 90_000 },
+    private readonly options: { maxDebateRounds: 1 | 2; maxModelCalls: number; totalTimeMs: number } = { maxDebateRounds: 2, maxModelCalls: 8, totalTimeMs: 90_000 },
   ) {}
 
   async mediate(dispute: DisputeAggregate): Promise<MediationResult> {
@@ -277,49 +277,76 @@ export class MediationOrchestrator {
       const base = caseInput(dispute, passages);
       const advocateSchema = advocateJsonSchema(passages.map((item) => item.id), dispute.evidence.map((item) => item.id));
       const mediatorSchema = finalJsonSchema(passages.map((item) => item.id));
-      const [buyerInitialRaw, supplierInitialRaw] = await Promise.all([
-        call<unknown>(`${BASE_SYSTEM}\nAct as the buyer advocate. Present the strongest supportable buyer case and acknowledge weaknesses.`, base, advocateSchema),
-        call<unknown>(`${BASE_SYSTEM}\nAct as the supplier advocate. Present the strongest supportable supplier case and acknowledge weaknesses.`, base, advocateSchema),
+      const repairableCitationError = (error: unknown): boolean =>
+        issue(error).startsWith("AI legal quote is not present in passage");
+      const repairInput = (response: unknown, error: unknown): string => JSON.stringify({
+        case: JSON.parse(base),
+        previousResponse: response,
+        validationError: issue(error),
+        allowedLegalPassages: passages.map(({ id, text }) => ({ id, text })),
+        instruction: "Return corrected JSON. Keep every non-citation field supportable. For each legalBasis quote, copy a contiguous quote verbatim from the legal passage with the matching passageId. Never quote tradeTerms as law. If a quote is not present, replace it with an exact passage quote; do not paraphrase.",
+      });
+      const callAdvocate = async (side: PartySide, system: string, input: string): Promise<AdvocateOutput> => {
+        let response = await call<unknown>(system, input, advocateSchema);
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          try {
+            const parsed = AdvocateSchema.parse(response);
+            validateAllocation(parsed.recommendedBuyerRefundUnits, parsed.recommendedSupplierReleaseUnits, dispute);
+            validateLegalBasis(parsed.legalBasis, passages);
+            validateEvidenceBasis(parsed.evidenceBasis, dispute);
+            return parsed;
+          } catch (error) {
+            if (attempt === 1 || !repairableCitationError(error)) throw error;
+            response = await call<unknown>(`${system}\nCitation repair required. The previous response failed deterministic legal-quote validation.`, repairInput(response, error), advocateSchema);
+          }
+        }
+        throw new Error("AI advocate did not produce a validated response");
+      };
+      const [buyerInitial, supplierInitial] = await Promise.all([
+        callAdvocate("buyer", `${BASE_SYSTEM}\nAct as the buyer advocate. Present the strongest supportable buyer case and acknowledge weaknesses.`, base),
+        callAdvocate("supplier", `${BASE_SYSTEM}\nAct as the supplier advocate. Present the strongest supportable supplier case and acknowledge weaknesses.`, base),
       ]);
-      const buyerInitial = AdvocateSchema.parse(buyerInitialRaw);
-      const supplierInitial = AdvocateSchema.parse(supplierInitialRaw);
-      for (const output of [buyerInitial, supplierInitial]) {
-        validateAllocation(output.recommendedBuyerRefundUnits, output.recommendedSupplierReleaseUnits, dispute);
-        validateLegalBasis(output.legalBasis, passages);
-        validateEvidenceBasis(output.evidenceBasis, dispute);
-      }
       buyerFinal = position("buyer", buyerInitial);
       supplierFinal = position("supplier", supplierInitial);
       rounds = 1;
 
       if (this.options.maxDebateRounds === 2 && buyerInitial.recommendedBuyerRefundUnits !== supplierInitial.recommendedBuyerRefundUnits) {
-        const [buyerRebuttalRaw, supplierRebuttalRaw] = await Promise.all([
-          call<unknown>(
+        const [buyerRebuttal, supplierRebuttal] = await Promise.all([
+          callAdvocate(
+            "buyer",
             `${BASE_SYSTEM}\nAct as the buyer advocate. Final rebuttal: address material weaknesses, then return the revised explicit two-destination allocation.`,
-            JSON.stringify({ case: JSON.parse(base), opposingAnalysis: supplierInitial }), advocateSchema,
+            JSON.stringify({ case: JSON.parse(base), opposingAnalysis: supplierInitial }),
           ),
-          call<unknown>(
+          callAdvocate(
+            "supplier",
             `${BASE_SYSTEM}\nAct as the supplier advocate. Final rebuttal: address material weaknesses, then return the revised explicit two-destination allocation.`,
-            JSON.stringify({ case: JSON.parse(base), opposingAnalysis: buyerInitial }), advocateSchema,
+            JSON.stringify({ case: JSON.parse(base), opposingAnalysis: buyerInitial }),
           ),
         ]);
-        const buyerRebuttal = AdvocateSchema.parse(buyerRebuttalRaw);
-        const supplierRebuttal = AdvocateSchema.parse(supplierRebuttalRaw);
-        for (const output of [buyerRebuttal, supplierRebuttal]) {
-          validateAllocation(output.recommendedBuyerRefundUnits, output.recommendedSupplierReleaseUnits, dispute);
-          validateLegalBasis(output.legalBasis, passages);
-          validateEvidenceBasis(output.evidenceBasis, dispute);
-        }
         buyerFinal = position("buyer", buyerRebuttal);
         supplierFinal = position("supplier", supplierRebuttal);
         rounds = 2;
       }
 
-      const finalRaw = await call<unknown>(
-        `${BASE_SYSTEM}\nAct as neutral mediator and critic. Check evidence support, citation validity, requested-remedy cap, and exact conservation arithmetic. Produce one proportionate non-binding proposal, or abstain.`,
-        JSON.stringify({ case: JSON.parse(base), buyerAnalysis: buyerFinal, supplierAnalysis: supplierFinal }), mediatorSchema,
-      );
-      const final = FinalSchema.parse(finalRaw) as FinalOutput;
+      const mediatorSystem = `${BASE_SYSTEM}\nAct as neutral mediator and critic. Check evidence support, citation validity, requested-remedy cap, and exact conservation arithmetic. Produce one proportionate non-binding proposal, or abstain.`;
+      const mediatorInput = JSON.stringify({ case: JSON.parse(base), buyerAnalysis: buyerFinal, supplierAnalysis: supplierFinal });
+      let finalRaw = await call<unknown>(mediatorSystem, mediatorInput, mediatorSchema);
+      let final: FinalOutput;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          final = FinalSchema.parse(finalRaw) as FinalOutput;
+          validateLegalBasis(final.legalBasis, passages);
+          if (final.outcome === "proposal") {
+            validateAllocation(final.buyerRefundUnits, final.supplierReleaseUnits, dispute);
+            validateEvidenceBasis(final.evidenceBasis, dispute);
+          }
+          break;
+        } catch (error) {
+          if (attempt === 1 || !repairableCitationError(error)) throw error;
+          finalRaw = await call<unknown>(`${mediatorSystem}\nCitation repair required. The previous response failed deterministic legal-quote validation.`, repairInput(finalRaw, error), mediatorSchema);
+        }
+      }
+      final = FinalSchema.parse(finalRaw) as FinalOutput;
       validateLegalBasis(final.legalBasis, passages);
       mediatorFinal = final;
       if (final.outcome === "abstain") {

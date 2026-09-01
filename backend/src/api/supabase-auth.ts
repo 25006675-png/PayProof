@@ -8,6 +8,10 @@ export class SupabaseTokenVerifier implements TokenVerifier {
     const client = createClient(this.url, this.publishableKey, { auth: { persistSession: false, autoRefreshToken: false }, global: { headers: { Authorization: `Bearer ${token}` } } });
     const { data, error } = await client.auth.getUser(token);
     if (error || !data.user) throw new DomainError("UNAUTHORIZED", "Invalid or expired user token", 401);
-    return { id: data.user.id };
+    return {
+      id: data.user.id,
+      email: data.user.email,
+      name: String(data.user.user_metadata?.full_name ?? data.user.user_metadata?.name ?? data.user.email ?? "Business user"),
+    };
   }
 }

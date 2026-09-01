@@ -102,6 +102,8 @@ export interface Proposal extends SettlementAllocation {
 export interface SettlementRecord extends SettlementAllocation {
   source: "supplier_agreement" | "mutual_proposal" | "arbitrator" | "early_mutual";
   proposalId?: string;
+  /** SHA-256 of the immutable proposal/agreement identifier signed by Sui. */
+  proposalHash?: string;
   agreementId: string;
   evidenceBundleHash: string;
   agreedAt: string;
@@ -208,6 +210,8 @@ export interface Actor {
   id: string;
   side?: PartySide;
   arbitrator?: boolean;
+  email?: string;
+  name?: string;
 }
 
 export interface DomainContext {
