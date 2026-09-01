@@ -1,6 +1,8 @@
 "use client";
 
 import { type PointerEvent as ReactPointerEvent, useEffect } from "react";
+import { useCurrentAccount } from "@mysten/dapp-kit-react";
+import { ConnectButton } from "@mysten/dapp-kit-react/ui";
 import {
   ArrowRight,
   ArrowLeftRight,
@@ -92,8 +94,13 @@ function GoogleMark() {
 
 function GoogleLoginBanner() {
   const router = useRouter();
+  const account = useCurrentAccount();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [showMoreOptions, setShowMoreOptions] = useState(false);
+
+  const shortenAddress = (address: string) =>
+    `${address.slice(0, 6)}\u2026${address.slice(-4)}`;
 
   async function login() {
     setBusy(true);
@@ -142,23 +149,34 @@ function GoogleLoginBanner() {
         </div>
 
         <DialogHeader className="google-auth-heading">
-          <DialogTitle>Sign in to ProofPay</DialogTitle>
+          <DialogTitle>Continue with Google</DialogTitle>
           <DialogDescription>
-            Use one verified business account to manage every purchase and
-            supply trade.
+            Creates your secure PayProof account through a verified Sui
+            identity.
           </DialogDescription>
         </DialogHeader>
 
         <div
           className="google-auth-route"
-          aria-label="Google account connects to the ProofPay Business Workspace"
+          aria-label="Google, real Sui zkLogin, and a PayProof account with a Sui address for signing"
         >
           <div>
             <span className="google-route-icon">
               <GoogleMark />
             </span>
-            <small>Identity provider</small>
-            <strong>Google account</strong>
+            <small>IDENTITY</small>
+            <strong>Google</strong>
+          </div>
+          <span className="google-route-line">
+            <i />
+            <ArrowRight size={15} />
+          </span>
+          <div>
+            <span className="proofpay-route-icon zklogin-route-icon">
+              <Fingerprint size={18} />
+            </span>
+            <small>SUI PROOF</small>
+            <strong>Real Sui zkLogin</strong>
           </div>
           <span className="google-route-line">
             <i />
@@ -171,8 +189,8 @@ function GoogleLoginBanner() {
             >
               <img src="/proofpay-logo.png" alt="" width="40" height="40" />
             </span>
-            <small>Destination</small>
-            <strong>Business workspace</strong>
+            <small>ACCOUNT</small>
+            <strong>PayProof account + Sui address for signing</strong>
           </div>
         </div>
 
@@ -196,14 +214,53 @@ function GoogleLoginBanner() {
           <GoogleMark />
           <span>
             <strong>{busy ? "Signing in…" : "Continue with Google"}</strong>
-            <small>
-              {hasSupabaseConfig()
-                ? "Secure Google OAuth via Supabase"
-                : "Demo session when OAuth is not configured"}
-            </small>
+            <small>Creates your secure PayProof account</small>
           </span>
           <ArrowRight size={17} />
         </button>
+
+        <button
+          className="auth-more-options"
+          type="button"
+          aria-expanded={showMoreOptions}
+          onClick={() => setShowMoreOptions((visible) => !visible)}
+        >
+          <span>More sign-in options</span>
+          <ChevronRight size={15} className={showMoreOptions ? "open" : ""} />
+        </button>
+
+        {showMoreOptions && (
+          <div className="wallet-auth-option">
+            <div className="wallet-auth-copy">
+              <span className="wallet-auth-icon">
+                <WalletCards size={18} />
+              </span>
+              <div>
+                <small>ALTERNATIVE LOGIN PATH</small>
+                <strong>Connect existing Sui wallet</strong>
+                <small>
+                  Creates your PayProof account using that verified address.
+                </small>
+              </div>
+            </div>
+            <ConnectButton>
+              <span className="wallet-connect-label">
+                {account ? "Wallet connected" : "Connect wallet"}
+                <ArrowRight size={14} />
+              </span>
+            </ConnectButton>
+            {account && (
+              <p className="wallet-auth-verified" role="status">
+                <BadgeCheck size={14} />
+                <span>
+                  <strong>Verified Sui address</strong>
+                  <small>{shortenAddress(account.address)}</small>
+                </span>
+              </p>
+            )}
+          </div>
+        )}
+
         {error && (
           <p className="google-auth-error" role="alert">
             {error}
@@ -212,12 +269,12 @@ function GoogleLoginBanner() {
 
         <p className="google-auth-privacy">
           <ShieldCheck size={14} />
-          ProofPay never sees or stores your Google password. Production
-          authentication is completed on Google&apos;s secure domain.
+          Supabase stores private app data. Sui signs and records escrow
+          transactions. ProofPay never sees or stores your Google password.
         </p>
         <div className="google-auth-foot">
-          <span>ONE BUSINESS ACCOUNT</span>
-          <span>ROLE SET PER ORDER</span>
+          <strong>Powered by Sui</strong>
+          <span>PRIVATE APP DATA IN SUPABASE</span>
           <span>NO PASSWORD COLLECTION</span>
         </div>
       </DialogContent>
@@ -329,8 +386,8 @@ function AccessPanel() {
       </div>
       <h2>One workspace for every trade.</h2>
       <p>
-        Sign in once to buy from suppliers, fulfil customer orders and follow
-        every protected settlement.
+        Continue with Google for Sui zkLogin, or connect an existing Sui wallet
+        as an alternative. Both paths create your PayProof account.
       </p>
       <div className="business-access-card">
         <span className="business-access-symbol">
@@ -794,7 +851,7 @@ export default function Home() {
         <footer className="marketing-footer">
           <Logo />
           <p>Delivery-linked B2B settlement on Sui.</p>
-          <span>Ops Atlas · Standalone concept</span>
+          <span>Powered by Sui</span>
         </footer>
       </main>
     </MotionConfig>

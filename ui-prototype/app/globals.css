@@ -393,8 +393,8 @@ body{background:#edf2f7}
 }
 .google-auth-dialog:before{content:"";position:absolute;inset:0;z-index:-2;background-image:linear-gradient(rgba(34,104,221,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(34,104,221,.045) 1px,transparent 1px);background-size:24px 24px;mask-image:linear-gradient(to bottom,#000,transparent 72%)}
 .google-auth-dialog:after{content:"";position:absolute;width:360px;height:250px;right:-160px;top:-95px;z-index:-1;background:radial-gradient(circle,rgba(69,202,255,.22),rgba(34,104,221,.06) 43%,transparent 72%);filter:blur(12px);pointer-events:none}
-.google-auth-dialog>button{top:18px!important;right:18px!important;z-index:8;border:1px solid rgba(13,29,48,.12);border-radius:50%;background:rgba(255,255,255,.74);opacity:.72;transition:transform 180ms ease,opacity 180ms ease,background 180ms ease}
-.google-auth-dialog>button:hover{transform:rotate(90deg);background:#fff;opacity:1}
+.google-auth-dialog>button:last-child{top:18px!important;right:18px!important;z-index:8;border:1px solid rgba(13,29,48,.12);border-radius:50%;background:rgba(255,255,255,.74);opacity:.72;transition:transform 180ms ease,opacity 180ms ease,background 180ms ease}
+.google-auth-dialog>button:last-child:hover{transform:rotate(90deg);background:#fff;opacity:1}
 .google-auth-orbit{height:1px;position:absolute;left:0;right:0;top:0;z-index:5;pointer-events:none}
 .google-auth-orbit span{width:36%;height:1px;position:absolute;left:-36%;top:-1px;background:linear-gradient(90deg,transparent,#59d5ff,transparent);box-shadow:0 0 17px 4px rgba(34,104,221,.3);animation:google-auth-scan 3.8s cubic-bezier(.4,0,.2,1) infinite}
 .google-auth-orbit i{width:150px;height:150px;position:absolute;right:-80px;top:-82px;border:1px solid rgba(34,104,221,.12);border-radius:50%;animation:google-auth-orbit 8s linear infinite}
@@ -1045,3 +1045,35 @@ body{background:#edf2f7}
 @media(max-width:760px){.live-console-header{flex-direction:column}.live-console-badge{align-self:flex-start}.live-signin-grid,.live-console-grid{grid-template-columns:1fr}.live-console-side{order:-1}.live-form-grid{grid-template-columns:1fr}.live-field-wide{grid-column:auto}.live-agent-finals{grid-template-columns:1fr}.live-invite-box small,.live-topup-box small,.live-wallet-box small,.live-proof-box small{max-width:200px}}
 @media(max-width:520px){.live-trade-console{padding:17px}.live-console-header h2{font-size:21px}.live-step-panel{padding:15px}.live-session-bar{align-items:flex-start;flex-wrap:wrap}.live-session-bar button{margin-left:0}.live-flow{grid-template-columns:1fr 10px 1fr 10px 1fr 10px 1fr;font-size:7px}.live-action-row{align-items:stretch;flex-direction:column}.live-topup-box,.live-wallet-box,.live-proof-box{width:100%}.live-wallet-box button{margin-left:auto}.live-status{font-size:7px}}
 .live-counter-evidence{display:grid;gap:6px;margin-bottom:12px}.live-counter-evidence>span{color:#607086;font-size:9px;font-weight:760;letter-spacing:.03em}
+
+/* Auth identity paths: Google zkLogin is primary, an existing Sui wallet is the alternative. */
+.google-auth-route{grid-template-columns:minmax(0,1fr) 42px minmax(0,1.08fr) 42px minmax(0,1.22fr)}
+.google-auth-route>div:last-child strong{white-space:normal;line-height:1.25}
+.zklogin-route-icon{background:#edf3fd;color:#174ca2}
+.auth-more-options{width:calc(100% - 60px);min-height:42px;margin:10px 30px 0;padding:0 13px;display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid rgba(34,104,221,.18);border-radius:6px;background:#f7f9fd;color:#174ca2;font-size:10px;font-weight:780;text-align:left;cursor:pointer;transition:border-color 160ms ease,background 160ms ease}
+.auth-more-options:hover{border-color:rgba(34,104,221,.44);background:#edf3fd}
+.auth-more-options svg{transition:transform 180ms ease}.auth-more-options svg.open{transform:rotate(90deg)}
+.wallet-auth-option{margin:10px 30px 0;padding:14px;border:1px solid rgba(34,104,221,.18);border-radius:6px;background:#fff}
+.wallet-auth-copy{display:grid;grid-template-columns:38px minmax(0,1fr);align-items:center;gap:10px}
+.wallet-auth-copy>div{display:flex;flex-direction:column;gap:4px;min-width:0}
+.wallet-auth-copy small:first-child{color:#2268dd;font-size:7px;font-weight:820;letter-spacing:.09em}
+.wallet-auth-copy strong{font-size:11px;line-height:1.3}
+.wallet-auth-copy small:last-child{color:#607086;font-size:9px;line-height:1.45}
+.wallet-auth-icon{width:38px;height:38px;display:grid;place-items:center;border-radius:5px;background:#e8effc;color:#174ca2}
+.wallet-auth-option mysten-dapp-kit-connect-button{display:block;width:100%;margin-top:12px;--primary:#123f91;--primary-foreground:#fff;--background:#fff;--foreground:#0d1d30;--border:rgba(34,104,221,.22);--radius:5px;--cursor-button:pointer}
+.wallet-auth-option mysten-dapp-kit-connect-button::part(trigger){width:100%;min-height:42px;padding:0 13px;border-radius:5px;font-family:var(--font-body);font-size:10px;font-weight:780;box-shadow:none}
+.wallet-connect-label{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%}
+.wallet-auth-verified{margin:10px 0 0;padding:9px 10px;display:flex;align-items:center;gap:8px;border:1px solid #a9cfbb;border-radius:5px;background:#e8f7ef;color:#23715d;font-size:9px}
+.wallet-auth-verified>svg{flex:0 0 auto}.wallet-auth-verified>span{display:flex;flex-direction:column;gap:3px}.wallet-auth-verified strong{font-size:9px}.wallet-auth-verified small{color:#467b67;font-family:var(--font-data);font-size:8px}
+.google-auth-foot>strong{color:#174ca2;font-size:8px;letter-spacing:.04em;white-space:nowrap}
+
+@media(max-width:520px){
+  .google-auth-route{grid-template-columns:1fr;gap:9px}
+  .google-auth-route>div{grid-template-columns:35px 1fr;column-gap:7px}
+  .google-auth-route>div>span{grid-row:1/3}
+  .google-auth-route .google-route-line{width:100%;height:1px}
+  .google-auth-route .google-route-line i{left:0}
+  .google-auth-route .google-route-line svg{right:-2px}
+  .auth-more-options{width:calc(100% - 40px);margin-left:20px;margin-right:20px}
+  .wallet-auth-option{margin-left:20px;margin-right:20px}
+}
