@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { MediationOrchestrator } from "../src/ai/mediation.js";
+import { loadPolicyCorpus } from "../src/policy/policy-corpus.js";
 import { acceptProposal, openDispute, recordAiProposal, supplierRespond } from "../src/domain/dispute-machine.js";
 import type { DomainContext } from "../src/domain/types.js";
 import { config } from "../src/config.js";
@@ -50,19 +51,20 @@ dispute = supplierRespond(dispute, supplier, {
   statement: "Supplier pre-shipment testing recorded 100 units per hour. Supplier disputes causation and offers an independent inspection and repair.",
 }, ctx);
 
-const retriever = new QdrantLegalIndex(
+const candidateAuthorities = new QdrantLegalIndex(
   config.qdrantUrl(), config.qdrantApiKey(), config.legalCollection,
   new GeminiEmbedder(config.geminiApiKey(), config.embeddingModel),
 );
+const policy = await loadPolicyCorpus(config.disputePolicyFile);
 const result = await new MediationOrchestrator(
-  recordingModel, retriever, ctx,
+  recordingModel, policy, ctx, undefined, candidateAuthorities,
 ).mediate(dispute);
 
 if (result.outcome === "abstain") {
   if (!result.reason || !result.unresolvedIssues.length) throw new Error("Live mediator abstained without a structured reason");
   if (result.run.outcome === "validation_failed") throw new Error(`Live mediation failed safety validation: ${result.run.validationIssues.join("; ")}`);
 } else {
-  if (!result.proposal.citations.length) throw new Error("Live AI proposal contained no verified legal citations");
+  if (!result.proposal.citations.length) throw new Error("Live AI proposal contained no verified clause citations");
   dispute = recordAiProposal(dispute, result.proposal, ctx, result.run);
   dispute = acceptProposal(dispute, buyer, result.proposal.id, ctx);
   dispute = acceptProposal(dispute, supplier, result.proposal.id, ctx);

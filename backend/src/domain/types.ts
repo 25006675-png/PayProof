@@ -14,6 +14,12 @@ export interface EvidenceFile {
   sha256: string;
   mimeType: string;
   sizeBytes: number;
+  /**
+   * Mechanical extraction of the file's contents, produced once when the file
+   * is submitted. Analysis quotes this text; it never sees the file itself.
+   * Absent means the file was registered but never read (policy DP-5.5).
+   */
+  transcript?: string;
 }
 
 export interface EvidenceSubmission {
@@ -33,14 +39,29 @@ export interface LegalCitation {
   excerpt: string;
 }
 
+export interface QuotedClause { clauseId: string; quote: string; }
+export interface QuotedEvidence { evidenceId: string; quote: string; }
+
+/** One side's case, structured as issues, evidence, rules, and application. */
 export interface AdvocatePosition {
   side: PartySide;
   recommendedBuyerRefundUnits: string;
   recommendedSupplierReleaseUnits: string;
-  evidenceBasis: Array<{ evidenceId: string; quote: string }>;
-  legalBasis: Array<{ passageId: string; quote: string }>;
+  issues: string[];
+  evidenceBasis: QuotedEvidence[];
+  contractBasis: QuotedClause[];
+  policyBasis: QuotedClause[];
+  application: string;
+  concessions: string[];
   inferences: string[];
   unresolvedQuestions: string[];
+}
+
+/** A finding on one disputed point, and the quoted evidence supporting it. */
+export interface MediatorFinding {
+  issue: string;
+  finding: string;
+  supportingEvidence: QuotedEvidence[];
 }
 
 export type MediatorDecision =
@@ -48,19 +69,36 @@ export type MediatorDecision =
       outcome: "proposal";
       buyerRefundUnits: string;
       supplierReleaseUnits: string;
-      evidenceBasis: Array<{ evidenceId: string; quote: string }>;
-      legalBasis: Array<{ passageId: string; quote: string }>;
+      commonGround: string[];
+      findings: MediatorFinding[];
+      contractBasis: QuotedClause[];
+      policyBasis: QuotedClause[];
+      reasoning: string;
       inferences: string[];
       evidenceSufficiency: "strong" | "moderate" | "weak";
+      /** How directly the quoted terms and policy clauses address this dispute. */
       legalRelevance: "direct" | "analogous" | "limited";
       unresolvedQuestions: string[];
     }
   | {
       outcome: "abstain";
       reason: string;
-      legalBasis: Array<{ passageId: string; quote: string }>;
+      commonGround: string[];
+      findings: MediatorFinding[];
+      contractBasis: QuotedClause[];
+      policyBasis: QuotedClause[];
       unresolvedQuestions: string[];
     };
+
+/** Maps a readable citation id back to the submission and file it came from. */
+export interface EvidenceIndexEntry {
+  id: string;
+  side: PartySide;
+  kind: "statement" | "document_transcript";
+  submissionId: string;
+  sha256?: string;
+  mimeType?: string;
+}
 
 /** Structured final outputs only. Hidden model reasoning is deliberately not stored. */
 export interface MediationRun {
@@ -70,6 +108,7 @@ export interface MediationRun {
   debateRounds: number;
   modelCalls: number;
   legalContext: LegalCitation[];
+  evidenceIndex: EvidenceIndexEntry[];
   buyerFinal?: AdvocatePosition;
   supplierFinal?: AdvocatePosition;
   mediatorFinal?: MediatorDecision;

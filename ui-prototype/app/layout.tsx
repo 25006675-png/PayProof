@@ -1,5 +1,10 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import "./app-shell.css";
+import "./app-shell-2.css";
+import "./app-shell-3.css";
+import "./app-shell-4.css";
+import "./app-shell-5.css";
 import { ClientShell } from "./client-shell";
 
 export const metadata: Metadata = {
@@ -7,9 +12,9 @@ export const metadata: Metadata = {
   description:
     "Delivery-linked B2B settlement that releases accepted value and protects genuine disputes.",
   icons: {
-    icon: "/proofpay-logo.png",
-    shortcut: "/proofpay-logo.png",
-    apple: "/proofpay-logo.png",
+    icon: "/assets/proofpay-logo.jpg",
+    shortcut: "/assets/proofpay-logo.jpg",
+    apple: "/assets/proofpay-logo.jpg",
   },
 };
 

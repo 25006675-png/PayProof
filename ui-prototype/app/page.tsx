@@ -1,7 +1,7 @@
 "use client";
 
 import { type PointerEvent as ReactPointerEvent, useEffect } from "react";
-import { useCurrentAccount } from "@mysten/dapp-kit-react";
+import { useCurrentAccount, useDAppKit } from "@mysten/dapp-kit-react";
 import { ConnectButton } from "@mysten/dapp-kit-react/ui";
 import {
   ArrowRight,
@@ -45,13 +45,14 @@ import {
   hasSupabaseConfig,
   startSupabaseGoogleLogin,
 } from "@/lib/payproof-api";
+import { authenticateConnectedWallet, beginGoogleZkLogin } from "@/lib/auth";
 
 const flow = [
   {
     number: "01",
     icon: WalletCards,
     title: "Fund",
-    copy: "Buyer secures USDC against the agreed purchase order.",
+    copy: "Buyer secures SUI against the agreed purchase order.",
   },
   {
     number: "02",
@@ -77,7 +78,7 @@ function Logo() {
   return (
     <a className="logo" href="#top" aria-label="ProofPay home">
       <span className="logo-mark brand-logo-mark" aria-hidden="true">
-        <img src="/proofpay-logo.png" alt="" width="40" height="40" />
+        <img src="/assets/proofpay-logo.jpg" alt="" width="40" height="40" />
       </span>
       <span>ProofPay</span>
     </a>
@@ -92,7 +93,7 @@ function GoogleMark() {
   );
 }
 
-function GoogleLoginBanner() {
+function LegacyGoogleLoginBanner() {
   const router = useRouter();
   const account = useCurrentAccount();
   const [busy, setBusy] = useState(false);
@@ -187,7 +188,7 @@ function GoogleLoginBanner() {
               className="proofpay-route-icon brand-logo-mark"
               aria-hidden="true"
             >
-              <img src="/proofpay-logo.png" alt="" width="40" height="40" />
+              <img src="/assets/proofpay-logo.jpg" alt="" width="40" height="40" />
             </span>
             <small>ACCOUNT</small>
             <strong>PayProof account + Sui address for signing</strong>
@@ -279,6 +280,101 @@ function GoogleLoginBanner() {
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function GoogleLoginBanner() {
+  const router = useRouter();
+  const account = useCurrentAccount();
+  const dAppKit = useDAppKit();
+  const [busy, setBusy] = useState(false);
+  const [walletOpen, setWalletOpen] = useState(false);
+  const [error, setError] = useState("");
+  const shortAddress = (address: string) => `${address.slice(0, 6)}…${address.slice(-4)}`;
+
+  async function googleLogin() {
+    setBusy(true);
+    setError("");
+    try {
+      await beginGoogleZkLogin();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Google sign-in could not be started.");
+      setBusy(false);
+    }
+  }
+
+  async function walletLogin() {
+    if (!account) return;
+    setBusy(true);
+    setError("");
+    try {
+      await authenticateConnectedWallet({
+        address: account.address,
+        sign: (message) => dAppKit.signPersonalMessage({ message }),
+      });
+      router.push("/workspace");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Wallet ownership could not be verified.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="auth-entry">
+      <button className="google-cta" type="button" onClick={() => void googleLogin()} disabled={busy}>
+        <GoogleMark />
+        <span>
+          <strong>{busy ? "Preparing sign-in…" : "Continue with Google"}</strong>
+          <small>Includes a Sui zkLogin address</small>
+        </span>
+        <ArrowRight size={17} />
+      </button>
+
+      <button className="auth-more-options" type="button" aria-expanded={walletOpen} onClick={() => setWalletOpen((open) => !open)}>
+        <span>Other sign-in options</span>
+        <ChevronRight size={15} className={walletOpen ? "open" : ""} />
+      </button>
+
+      {walletOpen && (
+      <>
+      <div className="auth-choice-divider"><span>or use an existing wallet</span></div>
+
+      <div className="wallet-auth-option wallet-auth-inline">
+        <div className="wallet-auth-copy">
+          <span className="wallet-auth-icon"><WalletCards size={18} /></span>
+          <div>
+            <strong>Connect existing Sui wallet</strong>
+            <small>For users who already manage a Sui wallet.</small>
+          </div>
+        </div>
+        <ConnectButton>
+          <span className="wallet-connect-label">
+            {account ? "Wallet connected" : "Connect wallet"}
+            <ArrowRight size={14} />
+          </span>
+        </ConnectButton>
+        {account && (
+          <>
+            <p className="wallet-auth-verified" role="status">
+              <BadgeCheck size={14} />
+              <span><strong>Connected address</strong><small>{shortAddress(account.address)}</small></span>
+            </p>
+            <button className="wallet-signin-button" type="button" onClick={() => void walletLogin()} disabled={busy}>
+              <ShieldCheck size={15} />
+              Sign in with this wallet
+              <ArrowRight size={14} />
+            </button>
+            <small className="wallet-signin-help">You will sign a readable message. No transaction or fee.</small>
+          </>
+        )}
+      </div>
+      </>
+      )}
+
+      {error && <p className="google-auth-error" role="alert">{error}</p>}
+      <p className="auth-entry-assurance"><LockKeyhole size={13} /> Google uses Sui zkLogin. Wallet sign-in verifies ownership without spending funds.</p>
+    </div>
   );
 }
 
@@ -384,31 +480,14 @@ function AccessPanel() {
         <Fingerprint size={15} />
         Secure business access
       </div>
-      <h2>One workspace for every trade.</h2>
-      <p>
-        Continue with Google for Sui zkLogin, or connect an existing Sui wallet
-        as an alternative. Both paths create your PayProof account.
-      </p>
-      <div className="business-access-card">
-        <span className="business-access-symbol">
-          <ArrowLeftRight size={21} />
-        </span>
-        <div>
-          <small>PROOFPAY BUSINESS WORKSPACE</small>
-          <strong>Purchase · Supply · Inspect · Settle</strong>
-          <p>Your position is fixed separately on every purchase order.</p>
-        </div>
-        <BadgeCheck size={19} />
-      </div>
+      <h2>Open your workspace.</h2>
+      <p>Purchase or supply from one account. Your role is set separately on each order.</p>
       <GoogleLoginBanner />
-      <p className="workspace-rule">
-        <ShieldCheck size={13} />
-        Your organisation may buy on one order and supply on another — never
-        both sides of the same trade.
-      </p>
-      <small className="legal-copy">
-        Demo access. Production accounts verify the organisation and permissions
-        server-side.
+      <small className="legal-copy consent-copy">
+        By continuing you agree to the{" "}
+        <a href="/legal/terms">Terms of Service</a> and the{" "}
+        <a href="/legal/dispute-policy">Dispute Resolution Policy</a>. Your
+        company details are verified before you can fund or receive payments.
       </small>
       <Dialog>
         <DialogTrigger asChild>
@@ -498,7 +577,7 @@ function OpsPreview() {
           Inspection closes in 43h 12m
         </span>
         <strong>
-          <AnimatedNumber value={30000} /> USDC secured
+          <AnimatedNumber value={30000} /> SUI secured
         </strong>
       </div>
     </motion.div>
@@ -851,6 +930,10 @@ export default function Home() {
         <footer className="marketing-footer">
           <Logo />
           <p>Delivery-linked B2B settlement on Sui.</p>
+          <nav className="marketing-footer-legal">
+            <a href="/legal/terms">Terms of Service</a>
+            <a href="/legal/dispute-policy">Dispute Policy</a>
+          </nav>
           <span>Powered by Sui</span>
         </footer>
       </main>

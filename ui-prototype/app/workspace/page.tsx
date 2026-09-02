@@ -1,290 +1,136 @@
 "use client";
 
-import {
-  ArrowLeftRight,
-  ArrowRight,
-  BadgeCheck,
-  Bell,
-  Box,
-  Building2,
-  ChevronDown,
-  CircleDollarSign,
-  Plus,
-  QrCode,
-  ShieldCheck,
-  Truck,
-  WalletCards,
-} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowRight, Plus, WalletCards } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { LiveTradeConsole } from "@/app/components/LiveTradeConsole";
+import { AppShell, EmptyArt, HelpHint, Notice, PageTitle, RoleTag, SampleTag, Skeleton, StatusPill } from "@/app/components/app-shell";
+import { type DemoOrder, claimOwner, formatOrderMoney as money } from "@/lib/demo-orders";
+import { nextAction } from "@/lib/order-status";
+import { suiDAppKit, SUI_TYPE } from "@/lib/sui-dapp-kit";
+import { useWorkspace } from "@/lib/use-workspace";
+import { AnimatedAmount, LiftCard } from "@/app/components/motion";
 
-function Logo() {
-  return (
-    <a className="logo" href="/">
-      <span className="logo-mark brand-logo-mark" aria-hidden="true">
-        <img src="/proofpay-logo.png" alt="" width="40" height="40" />
-      </span>
-      <span>ProofPay</span>
-    </a>
-  );
-}
+type QueueItem = { key: string; href: string; reference: string; title: string; detail: string; counterparty: string; role: "BUYER" | "SUPPLIER"; value: number; status?: string; sample: boolean };
 
-function NewTrade() {
-  return (
-    <Button className="app-primary" asChild>
-      <a href="/orders?action=create">
-        <Plus size={16} />
-        New purchase order
-      </a>
-    </Button>
-  );
-}
+export default function OverviewPage() {
+  const workspace = useWorkspace();
+  const [balance, setBalance] = useState<number | null>(null);
 
-function RoleBadge({ role }: { role: "BUYER" | "SUPPLIER" }) {
-  return (
-    <span
-      className={
-        role === "BUYER"
-          ? "trade-role trade-role-buyer"
-          : "trade-role trade-role-supplier"
-      }
-    >
-      {role === "BUYER" ? <Building2 size={14} /> : <Box size={14} />}
-      {role}
-    </span>
-  );
-}
+  useEffect(() => {
+    const address = workspace.session?.suiAddress;
+    if (!address) { setBalance(null); return; }
+    suiDAppKit.getClient("testnet").getBalance({ owner: address, coinType: SUI_TYPE })
+      .then((result) => setBalance(Number(result.balance.balance) / 1_000_000_000))
+      .catch(() => setBalance(null));
+  }, [workspace.session?.suiAddress]);
 
-export default function UnifiedWorkspace() {
+  const { queue, waiting, ledger } = useMemo(() => {
+    const queue: QueueItem[] = workspace.invitations.map((invitation) => ({
+      key: `invite-${invitation.orderId}`, href: `/orders/${encodeURIComponent(invitation.orderId)}`, reference: invitation.reference,
+      title: "Review and confirm the order", detail: `${invitation.counterpartyName} invited you to ${invitation.invitedRole === "buyer" ? "buy" : "supply"} this order. Delivery ${invitation.deliveryDate}.`,
+      counterparty: invitation.counterpartyName, role: invitation.invitedRole === "buyer" ? "BUYER" : "SUPPLIER", value: invitation.value, status: invitation.invitedRole === "buyer" ? "awaiting_buyer" : "awaiting_supplier", sample: false,
+    }));
+    const waiting: QueueItem[] = [];
+    const isOpen = (order: DemoOrder) => !["settled", "cancelled"].includes(order.status);
+    for (const order of workspace.orders) {
+      if (!isOpen(order)) continue;
+      const action = nextAction(order.status, order.role, { invited: order.source === "backend" ? Boolean(order.invited) : true, claimOwner: claimOwner(order.claim) });
+      const item: QueueItem = { key: order.id, href: `/orders/${encodeURIComponent(order.id)}`, reference: order.reference, title: action.title, detail: action.detail, counterparty: order.counterparty, role: order.role, value: order.value, status: order.status, sample: order.source === "sample" };
+      if (action.owner === "you" && !queue.some((entry) => entry.href === item.href)) queue.push(item);
+      else if (action.owner !== "you") waiting.push(item);
+    }
+    const secured = (role: "BUYER" | "SUPPLIER") => workspace.orders.filter((order) => order.role === role && ["funded", "in_transit", "delivered", "dispute_open", "negotiation_open", "arbitration_pending", "settlement_pending"].includes(order.status));
+    const buying = secured("BUYER");
+    const supplying = secured("SUPPLIER");
+    const releaseReady = workspace.orders.filter((order) => order.role === "SUPPLIER" && order.status === "settlement_pending");
+    return {
+      queue, waiting,
+      ledger: {
+        buying: { value: buying.reduce((sum, order) => sum + order.value, 0), count: buying.length },
+        supplying: { value: supplying.reduce((sum, order) => sum + order.value, 0), count: supplying.length },
+        release: { value: releaseReady.reduce((sum, order) => sum + (order.inspection?.acceptedValue ?? order.value), 0), count: releaseReady.length },
+      },
+    };
+  }, [workspace.orders, workspace.invitations]);
+
   return (
-    <div className="buyer-shell unified-shell">
-      <header className="app-header">
-        <Logo />
-        <nav>
-          <a className="nav-active" href="/workspace">
-            Overview
-          </a>
-          <a href="/orders">Orders</a>
-          <a href="/wallet">Wallet</a>
-          <a href="#deliveries">Activity</a>
-        </nav>
-        <div className="app-user">
-          <button className="app-icon" aria-label="Notifications">
-            <Bell size={17} />
-          </button>
-          <button className="user-button">
-            <span className="user-avatar unified-avatar">
-              <ArrowLeftRight size={16} />
-            </span>
-            <span>
-              <strong>GreenBite Trading</strong>
-              <small>Business workspace</small>
-            </span>
-            <ChevronDown size={14} />
-          </button>
+    <AppShell active="overview" company={workspace.company} actionCount={queue.length}>
+      <PageTitle title="Overview" description={<>{workspace.company}. {queue.length === 0 ? "Nothing needs your action right now." : `${queue.length} ${queue.length === 1 ? "order needs" : "orders need"} your action.`}</>}
+        actions={<Button className="btn-primary" asChild><a href="/orders?action=create"><Plus size={15} aria-hidden="true" />New purchase order</a></Button>} />
+      {workspace.error && <Notice tone="error">{workspace.error}</Notice>}
+
+      <section className="ledger" aria-label="Money position">
+        <LiftCard as="a" className="ledger-cell ledger-wallet" href="/wallet" tilt={2} lift={2}>
+          <span className="ledger-icon"><WalletCards size={18} aria-hidden="true" /></span>
+          <span className="ledger-label">Available in wallet</span>
+          {balance === null ? <strong className="text">Not connected</strong> : <strong><AnimatedAmount value={balance} decimals={2} /> <small>SUI</small></strong>}
+          <small>{balance === null ? (workspace.live ? "Sign in with Google or connect a Sui wallet to load the balance." : "Sign in to load your balance.") : "Spendable now. Separate from escrow."}</small>
+          <span className="ledger-link">Open wallet<ArrowRight size={13} aria-hidden="true" /></span>
+        </LiftCard>
+        <div className="ledger-cell">
+          <span className="ledger-label">Secured for your purchases<HelpHint text="Total value you have locked in escrow on orders you are buying. Released to suppliers only when you accept delivery or when a claim is settled." /></span>
+          <strong><AnimatedAmount value={ledger.buying.value} /> <small>SUI</small></strong>
+          <small>{ledger.buying.count} {ledger.buying.count === 1 ? "funded order" : "funded orders"}</small>
         </div>
-      </header>
-      <main className="buyer-main">
-        <LiveTradeConsole />
-        <section className="unified-guardrail">
-          <ShieldCheck size={17} />
-          <p>
-            <strong>One organisation, two trading capabilities.</strong>
-            <span>
-              Your role is fixed separately on every purchase order; the same
-              organisation cannot be both sides of one trade.
-            </span>
-          </p>
-          <BadgeCheck size={18} />
-        </section>
-        <section className="app-title unified-title">
-          <div>
-            <span>BUYER & SUPPLIER WORKSPACE · SUI TESTNET</span>
-            <h1>See both sides. Never mix them.</h1>
-            <p>
-              Inspect the goods you buy, fulfil the orders you supply and follow
-              every protected settlement from one operating view.
-            </p>
+        <div className="ledger-cell">
+          <span className="ledger-label">Secured for your sales<HelpHint text="Total value buyers have locked in escrow on orders you are supplying. It becomes yours when the buyer accepts delivery." /></span>
+          <strong><AnimatedAmount value={ledger.supplying.value} /> <small>SUI</small></strong>
+          <small>{ledger.supplying.count} {ledger.supplying.count === 1 ? "funded order" : "funded orders"}</small>
+        </div>
+        <div className="ledger-cell">
+          <span className="ledger-label">Ready to release to you</span>
+          <strong><AnimatedAmount value={ledger.release.value} /> <small>SUI</small></strong>
+          <small>{ledger.release.count} {ledger.release.count === 1 ? "settlement" : "settlements"} waiting to be executed</small>
+        </div>
+      </section>
+
+      <section className="panel" aria-labelledby="queue-title">
+        <div className="panel-head">
+          <h2 id="queue-title">Needs your action</h2>
+          <a className="panel-link" href="/orders?status=action">All orders needing action<ArrowRight size={13} aria-hidden="true" /></a>
+        </div>
+        {!workspace.ready ? <Skeleton lines={3} /> : queue.length === 0 ? (
+          <div className="queue-empty">
+            <EmptyArt kind="inbox" />
+            <strong>You are up to date</strong>
+            <span>New invitations, deliveries to check and shipments to send will appear here.</span>
           </div>
-          <NewTrade />
+        ) : (
+          <ul className="queue">
+            {queue.map((item, index) => (
+              <li key={item.key} className="row-reveal queue-row-action lift-row" style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}>
+                <span className="action-dot" aria-hidden="true" />
+                <div className="queue-main">
+                  <div className="queue-tags"><RoleTag role={item.role} compact />{item.status && <StatusPill status={item.status} />}{item.sample && <SampleTag />}</div>
+                  <strong>{item.title}</strong>
+                  <span>{item.reference} with {item.counterparty}. {item.detail}</span>
+                </div>
+                <div className="queue-side">
+                  <strong>{money(item.value)} SUI</strong>
+                  <a className="btn btn-primary" href={item.href}>Open order<ArrowRight size={14} aria-hidden="true" /></a>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {waiting.length > 0 && (
+        <section className="panel panel-quiet" aria-labelledby="waiting-title">
+          <div className="panel-head"><h2 id="waiting-title">Waiting on others</h2><a className="panel-link" href="/orders">All orders<ArrowRight size={13} aria-hidden="true" /></a></div>
+          <ul className="waiting-list">
+            {waiting.slice(0, 6).map((item) => (
+              <li key={item.key}>
+                <a className="row-link" href={item.href}><strong>{item.reference}</strong></a>
+                <span>{item.title}</span>
+                {item.status && <StatusPill status={item.status} />}
+                <span className="num">{money(item.value)} SUI</span>
+              </li>
+            ))}
+          </ul>
+          {waiting.length > 6 && <p className="panel-foot">{waiting.length - 6} more in the order list.</p>}
         </section>
-
-        <a
-          className="wallet-entry"
-          href="/wallet"
-          aria-label="Open ProofPay Wallet"
-        >
-          <span className="wallet-entry-icon">
-            <WalletCards size={22} />
-          </span>
-          <span className="wallet-entry-balance">
-            <small>PROOFPAY WALLET · AVAILABLE BALANCE</small>
-            <strong>
-              12,480 <em>USDC</em>
-            </strong>
-            <p>Spendable and withdrawable — always separate from escrow.</p>
-          </span>
-          <span className="wallet-entry-actions">
-            <i>TOP UP</i>
-            <i>WITHDRAW</i>
-            <i>
-              <QrCode size={13} />
-              B2C QR
-            </i>
-          </span>
-          <ArrowRight size={19} />
-        </a>
-
-        <section className="summary-rule unified-summary">
-          <article>
-            <span>BUYING · SECURED OUTGOING</span>
-            <strong>
-              70,400 <small>USDC</small>
-            </strong>
-            <p>Protected across three purchase orders</p>
-          </article>
-          <article>
-            <span>SUPPLYING · SECURED INCOMING</span>
-            <strong>
-              44,500 <small>USDC</small>
-            </strong>
-            <p>Backed by buyer escrow</p>
-          </article>
-          <article>
-            <span>RELEASE READY</span>
-            <strong>
-              26,100 <small>USDC</small>
-            </strong>
-            <p>Accepted supplier value</p>
-          </article>
-          <article>
-            <span>ACTION NEEDED</span>
-            <strong>4</strong>
-            <p>Two to inspect · two to fulfil</p>
-          </article>
-        </section>
-
-        <section id="deliveries" className="unified-lanes">
-          <article className="work-panel trade-lane buyer-lane">
-            <div className="lane-head">
-              <div>
-                <span className="card-label">
-                  PURCHASING LANE · ORDERS TO INSPECT
-                </span>
-                <h2>Your buying orders</h2>
-              </div>
-              <a className="lane-view-all" href="/orders?role=buyer">
-                View buying <ArrowRight size={13} />
-              </a>
-            </div>
-            <div className="lane-order lane-order-primary">
-              <div className="lane-order-top">
-                <RoleBadge role="BUYER" />
-                <span className="status-chip">43h 12m left</span>
-              </div>
-              <h3>PO-2471 · Cooking oil</h3>
-              <p>FreshSource Foods · 100 cartons delivered</p>
-              <div className="lane-money">
-                <span>
-                  <small>ESCROWED</small>
-                  <strong>30,000 USDC</strong>
-                </span>
-                <span>
-                  <small>DELIVERY</small>
-                  <strong>Ready to inspect</strong>
-                </span>
-              </div>
-              <a href="/orders?role=buyer&order=PO-2471">
-                Review delivery <ArrowRight size={15} />
-              </a>
-            </div>
-            <div className="lane-order">
-              <div className="lane-order-top">
-                <RoleBadge role="BUYER" />
-                <span className="muted-time">Arrives tomorrow</span>
-              </div>
-              <h3>PO-2468 · Food-grade packaging</h3>
-              <p>Apex Packaging · Logistics evidence attached</p>
-              <div className="lane-compact">
-                <Truck size={15} />
-                <span>In transit</span>
-                <strong>18,400 USDC</strong>
-              </div>
-            </div>
-          </article>
-
-          <article className="work-panel trade-lane supplier-lane">
-            <div className="lane-head">
-              <div>
-                <span className="card-label">
-                  SUPPLY LANE · ORDERS TO FULFIL
-                </span>
-                <h2>Your supply orders</h2>
-              </div>
-              <a className="lane-view-all" href="/orders?role=supplier">
-                View supplying <ArrowRight size={13} />
-              </a>
-            </div>
-            <div className="lane-order lane-order-primary">
-              <div className="lane-order-top">
-                <RoleBadge role="SUPPLIER" />
-                <span className="secured-chip">
-                  <i />
-                  Payment secured
-                </span>
-              </div>
-              <h3>PO-2470 · Pantry essentials</h3>
-              <p>Kita Grocer · 14,500 USDC locked</p>
-              <div className="lane-money">
-                <span>
-                  <small>YOUR NEXT STEP</small>
-                  <strong>Prepare shipment</strong>
-                </span>
-                <span>
-                  <small>PAYOUT ADDRESS</small>
-                  <strong>0x71F…9A2</strong>
-                </span>
-              </div>
-              <a href="/orders?role=supplier&order=PO-2470">
-                Open supplier order <ArrowRight size={15} />
-              </a>
-            </div>
-            <div className="lane-order">
-              <div className="lane-order-top">
-                <RoleBadge role="SUPPLIER" />
-                <span className="muted-time">Accepted 12m ago</span>
-              </div>
-              <h3>PO-2463 · Cooking supplies</h3>
-              <p>Bowl & Co. · 87 units accepted</p>
-              <div className="lane-compact">
-                <CircleDollarSign size={15} />
-                <span>Release ready</span>
-                <strong>9,800 USDC</strong>
-              </div>
-            </div>
-          </article>
-        </section>
-
-        <a className="all-orders-entry" href="/orders">
-          <span>
-            <small>COMPLETE ORDER REGISTER</small>
-            <strong>
-              All buying and supplying orders now live in one filtered list.
-            </strong>
-          </span>
-          <span>
-            Open Orders <ArrowRight size={16} />
-          </span>
-        </a>
-
-        <footer className="app-footer">
-          <span>
-            <ShieldCheck size={14} />
-            Role permissions are enforced per order, not by a visual switch.
-          </span>
-          <span>Demo Unified Workspace · Sui Testnet</span>
-        </footer>
-      </main>
-    </div>
+      )}
+    </AppShell>
   );
 }

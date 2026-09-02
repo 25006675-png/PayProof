@@ -3,11 +3,12 @@ import type { TradeInvite, TradeOrder } from "../domain/trade-types.js";
 export interface TradeStore {
   createOrder(order: TradeOrder): Promise<void>;
   getOrder(id: string): Promise<TradeOrder | undefined>;
-  listOrders(actorId: string): Promise<TradeOrder[]>;
+  listOrders(actorId: string, organizationIds?: string[]): Promise<TradeOrder[]>;
   saveOrder(order: TradeOrder, expectedVersion: number): Promise<void>;
   createInvite(invite: TradeInvite): Promise<void>;
   getInviteByTokenHash(tokenHash: string): Promise<TradeInvite | undefined>;
   getInviteByOrderId(orderId: string): Promise<TradeInvite | undefined>;
+  listPendingInvitesByEmail(invitedEmail: string, now: string): Promise<TradeInvite[]>;
   saveInvite(invite: TradeInvite): Promise<void>;
 }
 
@@ -25,9 +26,11 @@ export class MemoryTradeStore implements TradeStore {
     return order ? structuredClone(order) : undefined;
   }
 
-  async listOrders(actorId: string): Promise<TradeOrder[]> {
+  async listOrders(actorId: string, organizationIds: string[] = []): Promise<TradeOrder[]> {
     return [...this.orders.values()]
-      .filter((order) => order.buyerId === actorId || order.supplierId === actorId || order.arbitratorId === actorId)
+      .filter((order) => order.buyerId === actorId || order.supplierId === actorId || order.arbitratorId === actorId
+        || organizationIds.includes(order.buyerOrganizationId ?? "")
+        || organizationIds.includes(order.supplierOrganizationId ?? ""))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
       .map((order) => structuredClone(order));
   }
@@ -56,6 +59,13 @@ export class MemoryTradeStore implements TradeStore {
       .filter((invite) => invite.orderId === orderId)
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
     return latest ? structuredClone(latest) : undefined;
+  }
+
+  async listPendingInvitesByEmail(invitedEmail: string, now: string): Promise<TradeInvite[]> {
+    return [...this.invites.values()]
+      .filter((invite) => invite.invitedEmail === invitedEmail && !invite.acceptedBy && invite.expiresAt > now)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .map((invite) => structuredClone(invite));
   }
 
   async saveInvite(invite: TradeInvite): Promise<void> {

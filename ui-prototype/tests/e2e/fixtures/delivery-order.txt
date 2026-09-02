@@ -1,0 +1,11 @@
+DELIVERY ORDER DO-9911
+Carrier: DHL Express
+Consignee: GreenBite Trading Sdn Bhd, receiving dock, Shah Alam
+Delivered: 05 September 2026, 14:20
+
+Item                Ordered   Delivered   Condition
+Cooking oil 5L      100 ctn   100 ctn     13 cartons crushed and leaking at handover, noted by driver
+
+Received by: Aisyah Rahman (receiving supervisor)   Signature: [signed]
+Driver: Mohd Faiz   Signature: [signed]
+Remarks: Damage visible on pallet 3 before unloading. Photos taken at dock.

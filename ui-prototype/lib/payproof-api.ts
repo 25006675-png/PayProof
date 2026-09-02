@@ -3,7 +3,8 @@
 export type DemoSession = {
   accessToken: string;
   user: { id: string; email: string; name: string };
-  mode: "demo-google" | "supabase";
+  mode: "demo-google" | "supabase" | "wallet";
+  suiAddress?: string;
 };
 
 export type TradeLineItem = {
@@ -15,13 +16,33 @@ export type TradeLineItem = {
   unitPriceUnits: string;
 };
 
+export type TradeInspectionRecord = {
+  lines: Array<{ lineId: string; accepted: string; missing: string; damaged: string }>;
+  note?: string;
+  recordedBy: string;
+  recordedAt: string;
+};
+
+export type TradeConfirmation = {
+  confirmedBy: string;
+  confirmedRole: "buyer" | "supplier";
+  email?: string;
+  organizationName?: string;
+  orderVersion: number;
+  termsVersion: string;
+  confirmedAt: string;
+};
+
 export type TradeOrder = {
   id: string;
   reference: string;
-  buyerId: string;
+  initiatorRole?: "buyer" | "supplier";
+  buyerId?: string;
+  buyerOrganizationId?: string;
   buyerEmail?: string;
   buyerName?: string;
   supplierId?: string;
+  supplierOrganizationId?: string;
   supplierEmail: string;
   supplierName: string;
   supplierWalletAddress?: string;
@@ -53,16 +74,60 @@ export type TradeOrder = {
     releasedAt: string;
   };
   disputeId?: string;
+  confirmation?: TradeConfirmation;
+  documents?: Array<{
+    id: string; kind: string; name: string; mimeType: string; sizeBytes: number; sha256: string; storagePath: string;
+    uploadedBy: string; uploadedRole: "buyer" | "supplier"; uploadedAt: string; transcript?: string; extracted?: Record<string, unknown>;
+  }>;
+  shipment?: { carrier: string; trackingNumber: string; dispatchedAt: string; expectedAt?: string; recordedBy: string };
+  deliveryRecord?: { reference?: string; recordedBy: string; recordedAt: string };
+  inspection?: TradeInspectionRecord;
   settlement?: {
     buyerUnits: string;
     supplierUnits: string;
     transactionDigest?: string;
     receiptObjectId?: string;
     verifiedOnChain: boolean;
+    source?: "full_acceptance" | "dispute";
   };
   version: number;
   createdAt: string;
   updatedAt: string;
+};
+
+export type TradeInvitation = {
+  orderId: string;
+  reference: string;
+  buyerName: string;
+  counterpartyName?: string;
+  invitedRole?: "buyer" | "supplier";
+  invitedEmail: string;
+  assetType: string;
+  amountUnits: string;
+  deliveryDate: string;
+  invitedAt: string;
+  expiresAt: string;
+};
+
+export type InvitationDelivery = {
+  status: "sent" | "failed" | "not_configured";
+  messageId?: string;
+  attemptedAt: string;
+};
+
+export type OrganizationMembership = {
+  organizationId: string;
+  organizationName: string;
+  organizationSlug: string;
+  accountId: string;
+  authority: "owner" | "admin" | "member";
+  canBuy: boolean;
+  canSupply: boolean;
+};
+
+export type WorkspaceProfile = {
+  primary: OrganizationMembership;
+  organizations: OrganizationMembership[];
 };
 
 export type Dispute = {
@@ -196,6 +261,8 @@ export function saveSession(session: DemoSession): void {
 
 export function clearSession(): void {
   window.localStorage.removeItem(STORAGE_KEY);
+  window.sessionStorage.removeItem("payproof_zklogin_pending");
+  window.sessionStorage.removeItem("payproof_zklogin_session");
 }
 
 export async function signOutSession(): Promise<void> {

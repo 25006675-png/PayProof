@@ -1,0 +1,13 @@
+PURCHASE ORDER
+PO number: PO-7788
+Buyer: GreenBite Trading Sdn Bhd
+Supplier: FreshSource Foods Sdn Bhd
+Delivery date: 2026-09-25
+Deliver to: GreenBite receiving dock, Shah Alam
+
+Line  Description                 Qty   Unit     Unit price (USDC)   Line total
+1     Sunflower cooking oil 20L    36   drums    280.00              10,080.00
+2     Canola cooking oil 20L       28   drums    270.00               7,560.00
+3     Vitamin C 1000mg tablets     80   boxes     45.00               3,600.00
+
+Order total: 21,240.00 USDC

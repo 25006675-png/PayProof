@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 export const metadata: Metadata = {
   title: "Orders | ProofPay",
-  description: "Manage buying and supplying purchase orders from one role-aware register.",
+  description: "Every purchase order where you are the buyer or the supplier.",
 };
 
 export default function OrdersLayout({ children }: Readonly<{ children: React.ReactNode }>) {

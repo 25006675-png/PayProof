@@ -3,6 +3,8 @@ import { createApp, type TokenVerifier } from "../src/api/app.js";
 import { DemoOrderService } from "../src/demo/demo-service.js";
 import { DisputeService } from "../src/service/dispute-service.js";
 import { MemoryDisputeStore } from "../src/store/store.js";
+import { MemoryIdentityStore } from "../src/store/identity-store.js";
+import { IdentityService } from "../src/service/identity-service.js";
 import { BUYER, SUPPLIER, controlledContext, openInput } from "./fixtures.js";
 
 describe("HTTP API", () => {
@@ -17,6 +19,44 @@ describe("HTTP API", () => {
     });
     expect(response.status).toBe(201);
     expect((await response.json() as any).status).toBe("supplier_review");
+  });
+
+  it("returns the mapped PayProof identity for an authenticated request", async () => {
+    const control = controlledContext();
+    const verifier: TokenVerifier = {
+      verify: async () => ({ id: BUYER, email: "buyer@example.com", name: "Buyer" }),
+    };
+    const app = createApp(new DisputeService(new MemoryDisputeStore(), control.ctx), verifier);
+    const response = await app.request("/v1/me", {
+      headers: { authorization: "Bearer valid" },
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      id: BUYER,
+      email: "buyer@example.com",
+      name: "Buyer",
+    });
+  });
+
+  it("exposes wallet challenge authentication only when identity auth is configured", async () => {
+    const control = controlledContext();
+    const verifier: TokenVerifier = { verify: async (token) => ({ id: token }) };
+    const service = new DisputeService(new MemoryDisputeStore(), control.ctx);
+    const disabled = createApp(service, verifier);
+    expect((await disabled.request("/auth/wallet/challenge", { method: "POST" })).status).toBe(404);
+
+    const identity = new IdentityService(new MemoryIdentityStore(), {
+      sessionSecret: "test-only-session-secret-that-is-at-least-thirty-two-bytes",
+      zkLoginSaltSecret: "test-only-zklogin-salt-secret-at-least-thirty-two-bytes",
+    });
+    const enabled = createApp(service, verifier, undefined, undefined, undefined, undefined, false, identity);
+    const response = await enabled.request("/auth/wallet/challenge", {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "http://localhost:3000" },
+      body: JSON.stringify({ address: `0x${"1".repeat(64)}` }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ message: expect.stringContaining("Sign in to PayProof") });
   });
 
   it("does not expose internal errors", async () => {

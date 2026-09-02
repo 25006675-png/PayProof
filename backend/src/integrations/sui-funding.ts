@@ -1,7 +1,7 @@
 import { SuiGrpcClient } from "@mysten/sui/grpc";
 import { isValidStructTag, isValidSuiAddress, isValidSuiObjectId, isValidTransactionDigest, normalizeStructTag, normalizeSuiAddress, normalizeSuiObjectId } from "@mysten/sui/utils";
 import { DomainError } from "../domain/types.js";
-import type { FundingInput, TradeOrder, UndisputedReleaseInput } from "../domain/trade-types.js";
+import type { AcceptDeliveryInput, FundingInput, TradeOrder, UndisputedReleaseInput } from "../domain/trade-types.js";
 import type { DisputeAggregate } from "../domain/types.js";
 
 export interface SuiFundingReader {
@@ -11,6 +11,8 @@ export interface SuiFundingReader {
 export interface SuiFundingVerifier {
   verify(order: TradeOrder, funding: FundingInput): Promise<{ checkpoint?: string }>;
   verifyUndisputedRelease?(order: TradeOrder, dispute: DisputeAggregate, release: UndisputedReleaseInput): Promise<{ checkpoint?: string }>;
+  /** Confirms a release_full transaction paid the whole escrow to the supplier. */
+  verifyFullRelease?(order: TradeOrder, acceptance: AcceptDeliveryInput): Promise<{ checkpoint?: string }>;
 }
 
 function fail(message: string, status = 422): never {
@@ -94,6 +96,34 @@ export class GrpcSuiFundingVerifier implements SuiFundingVerifier {
     const created = (tx.effects?.changedObjects ?? []).find((change: any) => change.objectId === escrowId && change.idOperation === "Created");
     const expectedEscrowType = `${this.packageId}::escrow::Escrow<${normalizeStructTag(order.assetType)}>`;
     if (!created || normalizeStructTag(String(tx.objectTypes?.[escrowId] ?? "")) !== expectedEscrowType) fail("Funding transaction did not create the expected shared escrow object");
+    return { checkpoint: tx.checkpoint ? String(tx.checkpoint) : undefined };
+  }
+
+  async verifyFullRelease(order: TradeOrder, acceptance: AcceptDeliveryInput): Promise<{ checkpoint?: string }> {
+    if (!order.funding) fail("The order has no verified escrow funding", 409);
+    const txDigest = digest(acceptance.transactionDigest, "transactionDigest");
+    if (txDigest === order.funding.transactionDigest) fail("The release transaction must be distinct from the funding transaction");
+    const escrowId = objectId(order.funding.escrowObjectId, "escrowObjectId");
+    const buyer = address(order.funding.buyerAddress, "buyerAddress");
+    let response: any;
+    try {
+      response = await this.client.getTransaction({ digest: txDigest, include: { effects: true, events: true, objectTypes: true, transaction: true } });
+    } catch {
+      throw new DomainError("SUI_FUNDING_UNAVAILABLE", "Unable to read the release transaction from Sui", 502);
+    }
+    const tx = response?.Transaction ?? response?.transaction ?? response;
+    if (!tx) fail("The release transaction was not found on Sui", 404);
+    const status = tx.effects?.status?.success ?? tx.effects?.status?.status;
+    if (status === false || status === "failure") fail("The release transaction failed on Sui");
+    const sender = tx.transaction?.sender ?? tx.sender;
+    if (sender && address(String(sender), "release sender") !== buyer) fail("The release was not signed by the buyer wallet");
+    const changes: any[] = tx.effects?.changedObjects ?? [];
+    const deleted = changes.some((change) => { try { return objectId(String(change.objectId), "changed object") === escrowId && change.idOperation === "Deleted"; } catch { return false; } });
+    if (!deleted) fail("The release transaction did not close the order's escrow");
+    const receiptType = `${this.packageId}::escrow::SettlementReceipt<${normalizeStructTag(order.assetType)}>`;
+    const receipt = changes.find((change) => change.idOperation === "Created" && change.objectType && normalizeStructTag(String(change.objectType)) === receiptType);
+    if (!receipt) fail("The release transaction did not create a settlement receipt");
+    if (acceptance.receiptObjectId && objectId(acceptance.receiptObjectId, "receiptObjectId") !== objectId(String(receipt.objectId), "receipt object")) fail("The receipt object does not match the release transaction");
     return { checkpoint: tx.checkpoint ? String(tx.checkpoint) : undefined };
   }
 

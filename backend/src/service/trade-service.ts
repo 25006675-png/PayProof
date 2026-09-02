@@ -3,7 +3,13 @@ import { normalizeSuiAddress } from "@mysten/sui/utils";
 import type { DisputeService } from "./dispute-service.js";
 import { DomainError, type Actor, type DomainContext, type EvidenceFile } from "../domain/types.js";
 import type {
+  AcceptDeliveryInput,
   FundingInput,
+  TradeDocument,
+  TradeDocumentKind,
+  TradeInitiatorRole,
+  TradeInspection,
+  TradeInvitation,
   TradeInvite,
   TradeOrder,
   TradeOrderStatus,
@@ -12,12 +18,23 @@ import type {
   UndisputedReleaseInput,
 } from "../domain/trade-types.js";
 import type { TradeStore } from "../store/trade-store.js";
+import { MemoryDocumentStore, type DocumentStore } from "../store/document-store.js";
 import type { SuiFundingVerifier } from "../integrations/sui-funding.js";
+import type { OrganizationService } from "./organization-service.js";
+import { DisabledInvitationEmailSender, type InvitationEmailSender } from "../integrations/invitation-email.js";
+
+/** Version of the platform terms a party accepts when confirming an order. */
+export const TERMS_VERSION = "1.0";
 
 export interface CreateTradeOrderInput {
   reference: string;
-  supplierEmail: string;
+  /** Defaults to buyer. A supplier-initiated order invites the buyer to confirm. */
+  initiatorRole?: TradeInitiatorRole;
+  supplierEmail?: string;
   supplierName?: string;
+  supplierOrganizationId?: string;
+  buyerEmail?: string;
+  buyerName?: string;
   supplierWalletAddress?: string;
   arbitratorWalletAddress?: string;
   arbitratorId: string;
@@ -27,6 +44,25 @@ export interface CreateTradeOrderInput {
   deliveryDate: string;
   deliveryLocation: string;
   lineItems: TradeLineItem[];
+  buyerOrganizationId?: string;
+}
+
+export interface AttachDocumentInput {
+  kind: TradeDocumentKind;
+  name: string;
+  mimeType: string;
+  bytes: Uint8Array;
+  transcript?: string;
+  extracted?: Record<string, unknown>;
+}
+
+const DOCUMENT_KINDS: TradeDocumentKind[] = ["internal_agreement", "purchase_order", "dispatch_evidence", "delivery_evidence", "inspection_evidence", "claim_evidence"];
+const MAX_DOCUMENT_BYTES = 8 * 1024 * 1024;
+
+export interface AcceptInvitationInput {
+  email?: string;
+  name?: string;
+  supplierWalletAddress?: string;
 }
 
 export interface OpenTradeDisputeInput {
@@ -38,6 +74,7 @@ export interface OpenTradeDisputeInput {
   evidenceFiles?: EvidenceFile[];
   negotiationDeadline: string;
   maxHumanRounds?: number;
+  inspection?: { lines: TradeInspection["lines"]; note?: string };
 }
 
 function sha256(value: string): string {
@@ -48,19 +85,41 @@ function tokenHash(token: string): string {
   return sha256(token);
 }
 
-function canonicalOrderHash(input: CreateTradeOrderInput, buyerId: string): string {
+function canonicalOrderHash(input: CreateTradeOrderInput, initiatorId: string): string {
   return sha256(JSON.stringify({
-    reference: input.reference.trim(), buyerId, supplierEmail: input.supplierEmail.trim().toLowerCase(),
+    reference: input.reference.trim(), initiatorRole: input.initiatorRole ?? "buyer", initiatorId,
+    buyerOrganizationId: input.buyerOrganizationId ?? null, buyerEmail: input.buyerEmail?.trim().toLowerCase() ?? null,
+    supplierEmail: input.supplierEmail?.trim().toLowerCase() ?? null,
     supplierName: input.supplierName?.trim() ?? "", supplierWalletAddress: input.supplierWalletAddress, arbitratorWalletAddress: input.arbitratorWalletAddress, arbitratorId: input.arbitratorId,
     assetType: input.assetType, amountUnits: input.amountUnits, description: input.description.trim(),
     deliveryDate: input.deliveryDate, deliveryLocation: input.deliveryLocation.trim(), lineItems: input.lineItems,
   }));
 }
 
-function ensureEmail(value: string): string {
-  const email = value.trim().toLowerCase();
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new DomainError("INVALID_EMAIL", "A valid supplier email is required", 400);
+function ensureEmail(value: string | undefined, party = "supplier"): string {
+  const email = value?.trim().toLowerCase() ?? "";
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new DomainError("INVALID_EMAIL", `A valid ${party} email is required`, 400);
   return email;
+}
+
+/** The side that still has to confirm, or undefined once both parties are on the order. */
+function pendingSide(order: TradeOrder): TradeInitiatorRole | undefined {
+  if (!order.buyerId) return "buyer";
+  if (!order.supplierId) return "supplier";
+  return undefined;
+}
+
+function pendingEmail(order: TradeOrder): string | undefined {
+  const side = pendingSide(order);
+  return side === "buyer" ? order.buyerEmail?.trim().toLowerCase() : side === "supplier" ? order.supplierEmail.trim().toLowerCase() : undefined;
+}
+
+function initiatorName(order: TradeOrder): string {
+  return (order.initiatorRole === "supplier" ? order.supplierName : order.buyerName) || "A PayProof company";
+}
+
+function invitedName(order: TradeOrder): string {
+  return (order.initiatorRole === "supplier" ? order.buyerName : order.supplierName) || "the invited company";
 }
 
 function ensureAmount(value: string): string {
@@ -86,43 +145,151 @@ export class TradeService {
     private readonly ctx: DomainContext,
     private readonly inviteBaseUrl = "http://localhost:3000/workspace",
     private readonly fundingVerifier?: SuiFundingVerifier,
+    private readonly organizations?: OrganizationService,
+    private readonly invitationEmail: InvitationEmailSender = new DisabledInvitationEmailSender(),
+    private readonly documents: DocumentStore = new MemoryDocumentStore(),
   ) {}
+
+  /** Attach a file to the order. Either party (or the invited party) can attach; both can read. */
+  async attachDocument(orderId: string, actor: Actor, input: AttachDocumentInput): Promise<TradeOrder> {
+    const order = await this.getOrder(orderId, actor);
+    if (!DOCUMENT_KINDS.includes(input.kind)) throw new DomainError("INVALID_DOCUMENT", "Unknown document kind", 400);
+    if (!input.name.trim()) throw new DomainError("INVALID_DOCUMENT", "A file name is required", 400);
+    if (input.bytes.byteLength === 0 || input.bytes.byteLength > MAX_DOCUMENT_BYTES) throw new DomainError("INVALID_DOCUMENT", "The file must be between 1 byte and 8 MB", 400);
+    const role: TradeInitiatorRole = order.buyerId === actor.id || (order.buyerOrganizationId && await this.hasCapability(actor, "buy", order.buyerOrganizationId))
+      ? "buyer"
+      : order.supplierId === actor.id || (order.supplierOrganizationId && await this.hasCapability(actor, "supply", order.supplierOrganizationId))
+        ? "supplier"
+        : pendingSide(order) ?? "supplier";
+    const id = this.ctx.id();
+    const storagePath = `orders/${order.id}/${id}`;
+    await this.documents.put(storagePath, input.bytes, input.mimeType || "application/octet-stream");
+    const now = this.ctx.now().toISOString();
+    const document: TradeDocument = {
+      id, kind: input.kind, name: input.name.trim().slice(0, 256), mimeType: input.mimeType || "application/octet-stream", sizeBytes: input.bytes.byteLength,
+      sha256: sha256(Buffer.from(input.bytes).toString("binary")), storagePath, uploadedBy: actor.id, uploadedRole: role, uploadedAt: now,
+      transcript: input.transcript?.trim().slice(0, 50_000) || undefined, extracted: input.extracted,
+    };
+    // Re-read so a concurrent update (for example the claim that references this file) is not lost.
+    const fresh = await this.store.getOrder(order.id);
+    if (!fresh) throw new DomainError("NOT_FOUND", "Trade order not found", 404);
+    const updated: TradeOrder = { ...fresh, documents: [...(fresh.documents ?? []), document], updatedAt: now, version: fresh.version + 1 };
+    await this.store.saveOrder(updated, fresh.version);
+    return updated;
+  }
+
+  async readDocument(orderId: string, actor: Actor, documentId: string): Promise<{ document: TradeDocument; bytes: Uint8Array; mimeType: string }> {
+    const order = await this.getOrder(orderId, actor);
+    const document = order.documents?.find((candidate) => candidate.id === documentId);
+    if (!document) throw new DomainError("NOT_FOUND", "Document not found", 404);
+    const file = await this.documents.get(document.storagePath);
+    if (!file) throw new DomainError("NOT_FOUND", "The document file is no longer available", 404);
+    return { document, bytes: file.bytes, mimeType: file.mimeType || document.mimeType };
+  }
+
+  private async hasCapability(actor: Actor, capability: "buy" | "supply", organizationId: string): Promise<boolean> {
+    if (!this.organizations) return false;
+    try { await this.organizations.requireCapability(actor, capability, organizationId); return true; } catch { return false; }
+  }
 
   async createOrder(input: CreateTradeOrderInput, actor: Actor): Promise<TradeOrder> {
     if (!input.reference.trim() || !input.description.trim() || !input.deliveryDate.trim() || !input.deliveryLocation.trim()) {
       throw new DomainError("INVALID_ORDER", "Reference, description, delivery date, and location are required", 400);
     }
-    if (actor.id === input.arbitratorId) throw new DomainError("INVALID_PARTIES", "Buyer and arbitrator must be different", 400);
+    if (actor.id === input.arbitratorId) throw new DomainError("INVALID_PARTIES", "The initiating party and the arbitrator must be different", 400);
+    const initiatorRole: TradeInitiatorRole = input.initiatorRole ?? "buyer";
     const now = this.ctx.now().toISOString();
-    const order: TradeOrder = {
-      id: this.ctx.id(), reference: input.reference.trim(), buyerId: actor.id,
-      buyerEmail: actor.email, buyerName: actor.name,
-      supplierEmail: ensureEmail(input.supplierEmail), supplierName: input.supplierName?.trim() || input.supplierEmail.trim(), supplierWalletAddress: input.supplierWalletAddress?.trim(), arbitratorWalletAddress: input.arbitratorWalletAddress?.trim(),
+    const shared = {
+      id: this.ctx.id(), reference: input.reference.trim(), initiatorRole,
+      arbitratorWalletAddress: input.arbitratorWalletAddress?.trim(),
       arbitratorId: input.arbitratorId, assetType: input.assetType.trim(), amountUnits: ensureAmount(input.amountUnits),
       orderHash: canonicalOrderHash(input, actor.id), description: input.description.trim(),
       deliveryDate: input.deliveryDate.trim(), deliveryLocation: input.deliveryLocation.trim(),
-      lineItems: structuredClone(input.lineItems), status: "awaiting_supplier", version: 0,
-      createdAt: now, updatedAt: now,
+      lineItems: structuredClone(input.lineItems), version: 0, createdAt: now, updatedAt: now,
     };
+    let order: TradeOrder;
+    if (initiatorRole === "supplier") {
+      const supplierMembership = this.organizations
+        ? await this.organizations.requireCapability(actor, "supply", input.supplierOrganizationId)
+        : undefined;
+      const buyerEmail = ensureEmail(input.buyerEmail, "buyer");
+      if (actor.email && buyerEmail === actor.email.trim().toLowerCase()) throw new DomainError("INVALID_PARTIES", "The buyer email must belong to another company", 400);
+      order = {
+        ...shared, status: "awaiting_buyer",
+        supplierId: actor.id, supplierOrganizationId: supplierMembership?.organizationId,
+        supplierEmail: actor.email?.trim().toLowerCase() ?? ensureEmail(input.supplierEmail),
+        supplierName: supplierMembership?.organizationName ?? input.supplierName?.trim() ?? actor.name ?? "Supplier",
+        supplierWalletAddress: input.supplierWalletAddress?.trim(),
+        buyerEmail, buyerName: input.buyerName?.trim() || buyerEmail,
+      };
+    } else {
+      const buyerMembership = this.organizations
+        ? await this.organizations.requireCapability(actor, "buy", input.buyerOrganizationId)
+        : undefined;
+      const supplierEmail = ensureEmail(input.supplierEmail);
+      if (actor.email && supplierEmail === actor.email.trim().toLowerCase()) throw new DomainError("INVALID_PARTIES", "The supplier email must belong to another company", 400);
+      order = {
+        ...shared, status: "awaiting_supplier",
+        buyerId: actor.id, buyerOrganizationId: buyerMembership?.organizationId,
+        buyerEmail: actor.email, buyerName: buyerMembership?.organizationName ?? actor.name,
+        supplierEmail, supplierName: input.supplierName?.trim() || supplierEmail,
+        supplierWalletAddress: input.supplierWalletAddress?.trim(),
+      };
+    }
     await this.store.createOrder(order);
     return structuredClone(order);
   }
 
   async listOrders(actor: Actor): Promise<TradeOrder[]> {
-    return this.store.listOrders(actor.id);
+    const organizationIds = this.organizations
+      ? (await this.organizations.workspace(actor)).organizations.map((item) => item.organizationId)
+      : [];
+    return this.store.listOrders(actor.id, organizationIds);
   }
 
   async getOrder(id: string, actor: Actor): Promise<TradeOrder> {
     const order = await this.store.getOrder(id);
     if (!order) throw new DomainError("NOT_FOUND", "Trade order not found", 404);
-    if (!allowed(order, actor)) throw new DomainError("FORBIDDEN", "Actor cannot access this trade order", 403);
+    const organizationIds = this.organizations
+      ? (await this.organizations.workspace(actor)).organizations.map((item) => item.organizationId)
+      : [];
+    if (!allowed(order, actor) && !organizationIds.includes(order.buyerOrganizationId ?? "") && !organizationIds.includes(order.supplierOrganizationId ?? "")) {
+      // An invited supplier reads the order before accepting, with or without
+      // the emailed token: their verified email is what the invitation binds.
+      if (!(await this.pendingInviteFor(order, actor)))
+        throw new DomainError("FORBIDDEN", "Actor cannot access this trade order", 403);
+    }
     return order;
+  }
+
+  /** Pending invitations addressed to the actor's verified email. */
+  async listInvitations(actor: Actor): Promise<TradeInvitation[]> {
+    const email = actor.email?.trim().toLowerCase();
+    if (!email) return [];
+    const invites = await this.store.listPendingInvitesByEmail(email, this.ctx.now().toISOString());
+    const invitations: TradeInvitation[] = [];
+    const seenOrders = new Set<string>();
+    for (const invite of invites) {
+      if (seenOrders.has(invite.orderId)) continue;
+      seenOrders.add(invite.orderId);
+      const order = await this.store.getOrder(invite.orderId);
+      if (!order) continue;
+      const side = pendingSide(order);
+      if (!side || !["awaiting_supplier", "awaiting_buyer"].includes(order.status)) continue;
+      invitations.push({
+        orderId: order.id, reference: order.reference, buyerName: initiatorName(order), counterpartyName: initiatorName(order), invitedRole: side,
+        invitedEmail: invite.invitedEmail, assetType: order.assetType, amountUnits: order.amountUnits,
+        deliveryDate: order.deliveryDate, invitedAt: invite.createdAt, expiresAt: invite.expiresAt,
+      });
+    }
+    return invitations;
   }
 
   async createInvite(orderId: string, actor: Actor): Promise<TradeOrderWithInvite> {
     const order = await this.getOrder(orderId, actor);
-    if (order.buyerId !== actor.id) throw new DomainError("FORBIDDEN", "Only the buyer can send an invitation", 403);
-    if (order.status !== "awaiting_supplier") throw new DomainError("INVALID_STATE", "This order is no longer waiting for a supplier");
+    await this.requireInitiatorAuthority(order, actor, "Only the company that issued the order can send an invitation");
+    const invitedEmail = pendingEmail(order);
+    if (!invitedEmail || !["awaiting_supplier", "awaiting_buyer"].includes(order.status)) throw new DomainError("INVALID_STATE", "This order is no longer waiting for confirmation");
     const existing = await this.store.getInviteByOrderId(orderId);
     const now = this.ctx.now();
     if (existing && !existing.acceptedBy && new Date(existing.expiresAt).getTime() > now.getTime()) {
@@ -134,7 +301,7 @@ export class TradeService {
     const rawToken = randomBytes(32).toString("base64url");
     const expiresAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
     const invite: TradeInvite = {
-      id: this.ctx.id(), orderId, tokenHash: tokenHash(rawToken), invitedEmail: order.supplierEmail,
+      id: this.ctx.id(), orderId, tokenHash: tokenHash(rawToken), invitedEmail,
       expiresAt, createdAt: now.toISOString(),
     };
     await this.store.createInvite(invite);
@@ -142,42 +309,118 @@ export class TradeService {
     await this.store.saveOrder(updated, order.version);
     const result = structuredClone(updated) as TradeOrderWithInvite;
     result.inviteToken = rawToken;
-    result.inviteUrl = `${this.inviteBaseUrl}?invite=${encodeURIComponent(rawToken)}`;
+    result.inviteUrl = `${this.inviteBaseUrl.replace(/\/$/, "")}/${encodeURIComponent(order.id)}?invite=${encodeURIComponent(rawToken)}`;
+    const delivery = await this.invitationEmail.send({
+      invitationId: invite.id, to: invite.invitedEmail, orderReference: order.reference,
+      buyerName: initiatorName(order), supplierName: invitedName(order),
+      reviewUrl: result.inviteUrl, expiresAt,
+    });
+    await this.store.saveInvite({
+      ...invite, deliveryStatus: delivery.status, deliveryMessageId: delivery.messageId,
+      deliveryAttemptedAt: delivery.attemptedAt,
+    });
+    result.inviteDelivery = delivery;
     return result;
   }
 
-  async acceptInvite(rawToken: string, actor: Actor, input: { email?: string; name?: string; supplierWalletAddress?: string } = {}): Promise<TradeOrder> {
+  async acceptInvite(rawToken: string, actor: Actor, input: AcceptInvitationInput = {}): Promise<TradeOrder> {
     if (!rawToken.trim()) throw new DomainError("INVALID_INVITE", "Invitation token is required", 400);
     const invite = await this.store.getInviteByTokenHash(tokenHash(rawToken.trim()));
     if (!invite) throw new DomainError("INVALID_INVITE", "This invitation is invalid or has expired", 404);
+    return this.acceptWithInvite(invite, actor, input, true);
+  }
+
+  /** Accept from the workspace, where the verified email stands in for the emailed token. */
+  async acceptInvitation(orderId: string, actor: Actor, input: AcceptInvitationInput = {}): Promise<TradeOrder> {
+    const invite = await this.store.getInviteByOrderId(orderId);
+    if (!invite) throw new DomainError("INVALID_INVITE", "This order has no invitation to accept", 404);
+    return this.acceptWithInvite(invite, actor, input, false);
+  }
+
+  async cancelInvite(orderId: string, actor: Actor): Promise<TradeOrder> {
+    const order = await this.getOrder(orderId, actor);
+    await this.requireInitiatorAuthority(order, actor, "Only the company that issued the order can cancel an invitation");
+    if (!["awaiting_supplier", "awaiting_buyer"].includes(order.status)) throw new DomainError("INVALID_STATE", "This order is no longer waiting for confirmation");
+    const invite = await this.store.getInviteByOrderId(orderId);
+    const now = this.ctx.now();
+    if (!invite || invite.acceptedBy || new Date(invite.expiresAt).getTime() <= now.getTime())
+      throw new DomainError("NO_PENDING_INVITATION", "There is no pending invitation to cancel", 409);
+    await this.store.saveInvite({ ...invite, expiresAt: now.toISOString() });
+    const updated: TradeOrder = {
+      ...order, inviteId: undefined, inviteExpiresAt: undefined,
+      updatedAt: now.toISOString(), version: order.version + 1,
+    };
+    await this.store.saveOrder(updated, order.version);
+    return structuredClone(updated);
+  }
+
+  private async acceptWithInvite(invite: TradeInvite, actor: Actor, input: AcceptInvitationInput, tokenPresented: boolean): Promise<TradeOrder> {
     if (new Date(invite.expiresAt).getTime() <= this.ctx.now().getTime()) throw new DomainError("INVITE_EXPIRED", "This invitation has expired", 410);
     const order = await this.store.getOrder(invite.orderId);
     if (!order) throw new DomainError("NOT_FOUND", "The invited order no longer exists", 404);
-    if (order.supplierId && order.supplierId !== actor.id) throw new DomainError("INVITE_ALREADY_ACCEPTED", "This order has already been accepted by another supplier", 409);
+    const side = pendingSide(order) ?? (order.initiatorRole === "supplier" ? "buyer" : "supplier");
+    const acceptedId = side === "buyer" ? order.buyerId : order.supplierId;
+    if (acceptedId && acceptedId !== actor.id) throw new DomainError("INVITE_ALREADY_ACCEPTED", "This order has already been accepted by another company", 409);
     if (invite.acceptedBy && invite.acceptedBy !== actor.id) throw new DomainError("INVITE_ALREADY_ACCEPTED", "This invitation has already been accepted", 409);
-    if (actor.id === order.buyerId || actor.id === order.arbitratorId) throw new DomainError("INVALID_PARTY", "Buyer and arbitrator cannot accept as supplier", 400);
+    const initiatorId = side === "buyer" ? order.supplierId : order.buyerId;
+    if (actor.id === initiatorId || actor.id === order.arbitratorId) throw new DomainError("INVALID_PARTY", "The issuing company and the arbitrator cannot confirm the order", 400);
     const verifiedEmail = actor.email?.trim().toLowerCase();
     const submittedEmail = input.email?.trim().toLowerCase();
     if (verifiedEmail && submittedEmail && verifiedEmail !== submittedEmail) throw new DomainError("INVITE_EMAIL_MISMATCH", "The submitted supplier email does not match the authenticated account", 403);
-    const candidateEmail = verifiedEmail ?? submittedEmail;
+    // Without the emailed token, nothing but a verified email proves the actor
+    // is the invited party, so a self-declared address cannot stand in for one.
+    const candidateEmail = verifiedEmail ?? (tokenPresented ? submittedEmail : undefined);
     if (!candidateEmail) throw new DomainError("INVITE_EMAIL_REQUIRED", "A verified supplier email is required to accept this invitation", 403);
     if (candidateEmail !== invite.invitedEmail) throw new DomainError("INVITE_EMAIL_MISMATCH", "This invitation was issued to a different supplier account", 403);
+    const membership = this.organizations
+      ? await this.organizations.requireCapability(actor, side === "buyer" ? "buy" : "supply")
+      : undefined;
     const now = this.ctx.now().toISOString();
-    if (order.supplierWalletAddress && input.supplierWalletAddress && !sameAddress(order.supplierWalletAddress, input.supplierWalletAddress)) throw new DomainError("SUPPLIER_WALLET_MISMATCH", "The supplier wallet does not match the wallet recorded on the order", 409);
-    const updated: TradeOrder = {
-      ...order, supplierId: actor.id, supplierEmail: ensureEmail(input.email ?? actor.email ?? order.supplierEmail),
-      supplierName: (input.name ?? actor.name ?? order.supplierName).trim(), supplierWalletAddress: order.supplierWalletAddress ?? input.supplierWalletAddress?.trim(), status: "supplier_confirmed",
-      updatedAt: now, version: order.version + 1,
+    const confirmation = {
+      confirmedBy: actor.id, confirmedRole: side, email: candidateEmail, organizationName: membership?.organizationName ?? input.name ?? actor.name,
+      orderVersion: order.version, termsVersion: TERMS_VERSION, confirmedAt: now,
     };
+    let updated: TradeOrder;
+    if (side === "buyer") {
+      updated = {
+        ...order, buyerId: actor.id, buyerOrganizationId: membership?.organizationId,
+        buyerEmail: ensureEmail(input.email ?? actor.email ?? order.buyerEmail, "buyer"),
+        buyerName: (membership?.organizationName ?? input.name ?? actor.name ?? order.buyerName ?? "Buyer").trim(),
+        status: "supplier_confirmed", confirmation, updatedAt: now, version: order.version + 1,
+      };
+    } else {
+      if (order.supplierWalletAddress && input.supplierWalletAddress && !sameAddress(order.supplierWalletAddress, input.supplierWalletAddress)) throw new DomainError("SUPPLIER_WALLET_MISMATCH", "The supplier wallet does not match the wallet recorded on the order", 409);
+      updated = {
+        ...order, supplierId: actor.id, supplierOrganizationId: membership?.organizationId,
+        supplierEmail: ensureEmail(input.email ?? actor.email ?? order.supplierEmail),
+        supplierName: (membership?.organizationName ?? input.name ?? actor.name ?? order.supplierName).trim(), supplierWalletAddress: order.supplierWalletAddress ?? input.supplierWalletAddress?.trim(), status: "supplier_confirmed",
+        confirmation, updatedAt: now, version: order.version + 1,
+      };
+    }
     await this.store.saveOrder(updated, order.version);
     await this.store.saveInvite({ ...invite, acceptedBy: actor.id, acceptedAt: now });
     return updated;
   }
 
+  async previewInvite(rawToken: string, actor: Actor): Promise<TradeOrder> {
+    if (!rawToken.trim()) throw new DomainError("INVALID_INVITE", "Invitation token is required", 400);
+    const invite = await this.store.getInviteByTokenHash(tokenHash(rawToken.trim()));
+    if (!invite) throw new DomainError("INVALID_INVITE", "This invitation is invalid or has expired", 404);
+    if (new Date(invite.expiresAt).getTime() <= this.ctx.now().getTime()) throw new DomainError("INVITE_EXPIRED", "This invitation has expired", 410);
+    const verifiedEmail = actor.email?.trim().toLowerCase();
+    if (!verifiedEmail || verifiedEmail !== invite.invitedEmail) throw new DomainError("INVITE_EMAIL_MISMATCH", "Sign in with the supplier email that received this invitation", 403);
+    const order = await this.store.getOrder(invite.orderId);
+    if (!order) throw new DomainError("NOT_FOUND", "The invited order no longer exists", 404);
+    const side = pendingSide(order) ?? (order.initiatorRole === "supplier" ? "buyer" : "supplier");
+    const acceptedId = side === "buyer" ? order.buyerId : order.supplierId;
+    if (acceptedId && acceptedId !== actor.id) throw new DomainError("INVITE_ALREADY_ACCEPTED", "This order has already been accepted by another company", 409);
+    return structuredClone(order);
+  }
+
   async recordFunding(orderId: string, actor: Actor, input: FundingInput): Promise<TradeOrder> {
     const order = await this.getOrder(orderId, actor);
-    if (order.buyerId !== actor.id) throw new DomainError("FORBIDDEN", "Only the buyer can fund an order", 403);
-    if (!order.supplierId) throw new DomainError("SUPPLIER_REQUIRED", "The supplier must accept the invitation before funding", 409);
+    await this.requireBuyerAuthority(order, actor, "Only an authorized buyer can fund an order");
+    if (!order.supplierId || !order.buyerId) throw new DomainError("SUPPLIER_REQUIRED", "Both parties must confirm the order before funding", 409);
     if (!["supplier_confirmed", "funded"].includes(order.status)) throw new DomainError("INVALID_STATE", "This order is not ready for funding");
     if (!input.packageId || !input.escrowObjectId || !input.transactionDigest) throw new DomainError("INVALID_FUNDING", "Sui package, escrow object, and transaction digest are required", 400);
     if (order.funding) {
@@ -201,23 +444,35 @@ export class TradeService {
     return updated;
   }
 
-  async markShipment(orderId: string, actor: Actor): Promise<TradeOrder> {
+  async markShipment(orderId: string, actor: Actor, input?: { carrier?: string; trackingNumber?: string; dispatchedAt?: string; expectedAt?: string }): Promise<TradeOrder> {
     const order = await this.getOrder(orderId, actor);
-    if (order.supplierId !== actor.id) throw new DomainError("FORBIDDEN", "Only the supplier can mark shipment", 403);
+    await this.requireSupplierAuthority(order, actor, "Only an authorized supplier can mark shipment");
     if (order.status !== "funded") throw new DomainError("INVALID_STATE", "The order must be funded before shipment");
-    return this.saveStatus(order, "in_transit");
+    const now = this.ctx.now().toISOString();
+    const shipment = input && (input.carrier || input.trackingNumber)
+      ? { carrier: input.carrier?.trim() || "Not stated", trackingNumber: input.trackingNumber?.trim() || "", dispatchedAt: input.dispatchedAt?.trim() || now, expectedAt: input.expectedAt?.trim() || undefined, recordedBy: actor.id }
+      : order.shipment;
+    const next: TradeOrder = { ...order, status: "in_transit", shipment, updatedAt: now, version: order.version + 1 };
+    await this.store.saveOrder(next, order.version);
+    return next;
   }
 
-  async markDelivered(orderId: string, actor: Actor): Promise<TradeOrder> {
+  async markDelivered(orderId: string, actor: Actor, input?: { reference?: string }): Promise<TradeOrder> {
     const order = await this.getOrder(orderId, actor);
-    if (order.buyerId !== actor.id && order.supplierId !== actor.id) throw new DomainError("FORBIDDEN", "Only a trade party can record delivery", 403);
+    const memberships = this.organizations ? (await this.organizations.workspace(actor)).organizations : [];
+    const isParty = order.buyerId === actor.id || order.supplierId === actor.id
+      || memberships.some((item) => item.organizationId === order.buyerOrganizationId || item.organizationId === order.supplierOrganizationId);
+    if (!isParty) throw new DomainError("FORBIDDEN", "Only a trade party can record delivery", 403);
     if (order.status !== "in_transit") throw new DomainError("INVALID_STATE", "The order must be in transit before delivery");
-    return this.saveStatus(order, "delivered");
+    const now = this.ctx.now().toISOString();
+    const next: TradeOrder = { ...order, status: "delivered", deliveryRecord: { reference: input?.reference?.trim() || undefined, recordedBy: actor.id, recordedAt: now }, updatedAt: now, version: order.version + 1 };
+    await this.store.saveOrder(next, order.version);
+    return next;
   }
 
   async recordUndisputedRelease(orderId: string, actor: Actor, input: UndisputedReleaseInput): Promise<TradeOrder> {
     const order = await this.getOrder(orderId, actor);
-    if (order.supplierId !== actor.id) throw new DomainError("FORBIDDEN", "Only the supplier can release the undisputed balance", 403);
+    await this.requireSupplierAuthority(order, actor, "Only an authorized supplier can release the undisputed balance");
     if (!order.funding || !order.disputeId) throw new DomainError("DISPUTE_REQUIRED", "A funded order with an open dispute is required", 409);
     if (order.undisputedRelease) throw new DomainError("ALREADY_RELEASED", "The undisputed balance has already been released", 409);
     const dispute = await this.disputes.get(order.disputeId);
@@ -242,8 +497,8 @@ export class TradeService {
 
   async openDispute(orderId: string, actor: Actor, input: OpenTradeDisputeInput) {
     const order = await this.getOrder(orderId, actor);
-    if (order.buyerId !== actor.id) throw new DomainError("FORBIDDEN", "Only the buyer can open a dispute", 403);
-    if (!order.supplierId || !order.funding) throw new DomainError("FUNDING_REQUIRED", "A funded order with a supplier is required before opening a dispute", 409);
+    await this.requireBuyerAuthority(order, actor, "Only an authorized buyer can open a dispute");
+    if (!order.supplierId || !order.buyerId || !order.funding) throw new DomainError("FUNDING_REQUIRED", "A funded order with a supplier is required before opening a dispute", 409);
     if (!["funded", "in_transit", "delivered"].includes(order.status)) throw new DomainError("INVALID_STATE", "This order cannot be disputed at its current stage");
     const dispute = await this.disputes.open({
       orderId: order.id, buyerId: order.buyerId, supplierId: order.supplierId, arbitratorId: order.arbitratorId,
@@ -264,9 +519,53 @@ export class TradeService {
       },
     }, actor);
     const now = this.ctx.now().toISOString();
-    const updated: TradeOrder = { ...order, disputeId: dispute.id, status: "dispute_open", updatedAt: now, version: order.version + 1 };
+    const updated: TradeOrder = {
+      ...order, disputeId: dispute.id, status: "dispute_open", updatedAt: now, version: order.version + 1,
+      inspection: input.inspection ? { lines: structuredClone(input.inspection.lines), note: input.inspection.note?.trim(), recordedBy: actor.id, recordedAt: now } : order.inspection,
+    };
     await this.store.saveOrder(updated, order.version);
     return { order: updated, dispute };
+  }
+
+  /**
+   * The buyer accepted the whole delivery. The escrow contract's release_full
+   * pays the supplier in one transaction; this records the inspection counts
+   * and the settlement against that transaction.
+   */
+  async acceptDelivery(orderId: string, actor: Actor, input: AcceptDeliveryInput): Promise<TradeOrder> {
+    const order = await this.getOrder(orderId, actor);
+    await this.requireBuyerAuthority(order, actor, "Only an authorized buyer can accept a delivery");
+    if (!order.funding || !order.supplierId) throw new DomainError("FUNDING_REQUIRED", "Only a funded order can be accepted", 409);
+    if (order.status !== "delivered") throw new DomainError("INVALID_STATE", "The delivery must be recorded before it can be accepted");
+    if (!input.transactionDigest?.trim()) throw new DomainError("INVALID_RELEASE", "A release transaction digest is required", 400);
+    if (input.inspection) {
+      for (const line of input.inspection.lines) {
+        const item = order.lineItems.find((candidate) => candidate.id === line.lineId);
+        if (!item) throw new DomainError("INVALID_INSPECTION", `Unknown order line ${line.lineId}`, 400);
+        if (BigInt(line.accepted) !== BigInt(item.quantity) || BigInt(line.missing) !== 0n || BigInt(line.damaged) !== 0n) {
+          throw new DomainError("INVALID_INSPECTION", "Full acceptance requires every line to be accepted in full. Open a claim for exceptions.", 400);
+        }
+      }
+    }
+    let verificationStatus: "verified_on_chain" | "external_reference" = "external_reference";
+    if (this.fundingVerifier?.verifyFullRelease) {
+      await this.fundingVerifier.verifyFullRelease(order, input);
+      verificationStatus = "verified_on_chain";
+    }
+    const now = this.ctx.now().toISOString();
+    const updated: TradeOrder = {
+      ...order, status: "settled", updatedAt: now, version: order.version + 1,
+      inspection: {
+        lines: input.inspection ? structuredClone(input.inspection.lines) : order.lineItems.map((item) => ({ lineId: item.id, accepted: item.quantity, missing: "0", damaged: "0" })),
+        note: input.inspection?.note?.trim(), recordedBy: actor.id, recordedAt: now,
+      },
+      settlement: {
+        buyerUnits: "0", supplierUnits: order.amountUnits, transactionDigest: input.transactionDigest.trim(),
+        receiptObjectId: input.receiptObjectId?.trim(), verifiedOnChain: verificationStatus === "verified_on_chain", source: "full_acceptance",
+      },
+    };
+    await this.store.saveOrder(updated, order.version);
+    return updated;
   }
 
   async syncDispute(disputeId: string): Promise<TradeOrder | undefined> {
@@ -288,5 +587,37 @@ export class TradeService {
     const next = { ...order, status, updatedAt: this.ctx.now().toISOString(), version: order.version + 1 };
     await this.store.saveOrder(next, order.version);
     return next;
+  }
+
+  private async pendingInviteFor(order: TradeOrder, actor: Actor): Promise<TradeInvite | undefined> {
+    const email = actor.email?.trim().toLowerCase();
+    if (!email || !pendingSide(order)) return undefined;
+    const invite = await this.store.getInviteByOrderId(order.id);
+    if (!invite || invite.acceptedBy || invite.invitedEmail !== email) return undefined;
+    return new Date(invite.expiresAt).getTime() > this.ctx.now().getTime() ? invite : undefined;
+  }
+
+  private async requireInitiatorAuthority(order: TradeOrder, actor: Actor, message: string): Promise<void> {
+    return order.initiatorRole === "supplier"
+      ? this.requireSupplierAuthority(order, actor, message)
+      : this.requireBuyerAuthority(order, actor, message);
+  }
+
+  private async requireBuyerAuthority(order: TradeOrder, actor: Actor, message: string): Promise<void> {
+    if (order.buyerId && order.buyerId === actor.id) return;
+    if (this.organizations && order.buyerOrganizationId) {
+      await this.organizations.requireCapability(actor, "buy", order.buyerOrganizationId);
+      return;
+    }
+    throw new DomainError("FORBIDDEN", message, 403);
+  }
+
+  private async requireSupplierAuthority(order: TradeOrder, actor: Actor, message: string): Promise<void> {
+    if (order.supplierId === actor.id) return;
+    if (this.organizations && order.supplierOrganizationId) {
+      await this.organizations.requireCapability(actor, "supply", order.supplierOrganizationId);
+      return;
+    }
+    throw new DomainError("FORBIDDEN", message, 403);
   }
 }

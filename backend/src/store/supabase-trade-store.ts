@@ -15,8 +15,10 @@ export class SupabaseTradeStore implements TradeStore {
   async createOrder(order: TradeOrder): Promise<void> {
     const { error } = await this.client.from("trade_orders").insert({
       id: order.id,
-      buyer_id: order.buyerId,
+      buyer_id: order.buyerId ?? null,
+      buyer_organization_id: order.buyerOrganizationId ?? null,
       supplier_id: order.supplierId ?? null,
+      supplier_organization_id: order.supplierOrganizationId ?? null,
       arbitrator_id: order.arbitratorId,
       status: order.status,
       version: order.version,
@@ -31,11 +33,13 @@ export class SupabaseTradeStore implements TradeStore {
     return data?.aggregate as TradeOrder | undefined;
   }
 
-  async listOrders(actorId: string): Promise<TradeOrder[]> {
+  async listOrders(actorId: string, organizationIds: string[] = []): Promise<TradeOrder[]> {
+    const filters = [`buyer_id.eq.${actorId}`, `supplier_id.eq.${actorId}`, `arbitrator_id.eq.${actorId}`];
+    for (const id of organizationIds) filters.push(`buyer_organization_id.eq.${id}`, `supplier_organization_id.eq.${id}`);
     const { data, error } = await this.client
       .from("trade_orders")
       .select("aggregate")
-      .or(`buyer_id.eq.${actorId},supplier_id.eq.${actorId},arbitrator_id.eq.${actorId}`)
+      .or(filters.join(","))
       .order("updated_at", { ascending: false });
     if (error) throw new Error(`Supabase trade order list failed: ${error.message}`);
     return (data ?? []).map((row) => row.aggregate as TradeOrder);
@@ -46,7 +50,10 @@ export class SupabaseTradeStore implements TradeStore {
       p_id: order.id,
       p_expected_version: expectedVersion,
       p_status: order.status,
+      p_buyer_id: order.buyerId ?? null,
+      p_buyer_organization_id: order.buyerOrganizationId ?? null,
       p_supplier_id: order.supplierId ?? null,
+      p_supplier_organization_id: order.supplierOrganizationId ?? null,
       p_aggregate: order,
     });
     if (error) throw new Error(`Supabase trade order save failed: ${error.message}`);
@@ -63,6 +70,9 @@ export class SupabaseTradeStore implements TradeStore {
       accepted_by: invite.acceptedBy ?? null,
       accepted_at: invite.acceptedAt ?? null,
       created_at: invite.createdAt,
+      delivery_status: invite.deliveryStatus ?? null,
+      delivery_message_id: invite.deliveryMessageId ?? null,
+      delivery_attempted_at: invite.deliveryAttemptedAt ?? null,
     });
     if (error) throw new Error(`Supabase trade invite create failed: ${error.message}`);
   }
@@ -74,6 +84,9 @@ export class SupabaseTradeStore implements TradeStore {
       acceptedBy: row.accepted_by ? String(row.accepted_by) : undefined,
       acceptedAt: row.accepted_at ? String(row.accepted_at) : undefined,
       createdAt: String(row.created_at),
+      deliveryStatus: row.delivery_status ? String(row.delivery_status) as TradeInvite["deliveryStatus"] : undefined,
+      deliveryMessageId: row.delivery_message_id ? String(row.delivery_message_id) : undefined,
+      deliveryAttemptedAt: row.delivery_attempted_at ? String(row.delivery_attempted_at) : undefined,
     };
   }
 
@@ -89,8 +102,20 @@ export class SupabaseTradeStore implements TradeStore {
     return data ? this.mapInvite(data as Record<string, unknown>) : undefined;
   }
 
+  async listPendingInvitesByEmail(invitedEmail: string, now: string): Promise<TradeInvite[]> {
+    const { data, error } = await this.client.from("trade_invites").select("*")
+      .eq("invited_email", invitedEmail).is("accepted_by", null).gt("expires_at", now)
+      .order("created_at", { ascending: false });
+    if (error) throw new Error(`Supabase trade invite lookup failed: ${error.message}`);
+    return (data ?? []).map((row) => this.mapInvite(row as Record<string, unknown>));
+  }
+
   async saveInvite(invite: TradeInvite): Promise<void> {
-    const { error } = await this.client.from("trade_invites").update({ expires_at: invite.expiresAt, accepted_by: invite.acceptedBy ?? null, accepted_at: invite.acceptedAt ?? null }).eq("id", invite.id);
+    const { error } = await this.client.from("trade_invites").update({
+      expires_at: invite.expiresAt, accepted_by: invite.acceptedBy ?? null, accepted_at: invite.acceptedAt ?? null,
+      delivery_status: invite.deliveryStatus ?? null, delivery_message_id: invite.deliveryMessageId ?? null,
+      delivery_attempted_at: invite.deliveryAttemptedAt ?? null,
+    }).eq("id", invite.id);
     if (error) throw new Error(`Supabase trade invite save failed: ${error.message}`);
   }
 }

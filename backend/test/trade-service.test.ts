@@ -137,4 +137,195 @@ describe("trade lifecycle API", () => {
     expect(agreed.settlement?.proposalHash).toMatch(/^[a-f0-9]{64}$/);
     expect(saved.status).toBe("settlement_pending");
   });
+  it("surfaces a pending invitation to the invited email and accepts it without the emailed token", async () => {
+    const control = controlledContext();
+    const disputes = new DisputeService(new MemoryDisputeStore(), control.ctx);
+    const trades = new TradeService(new MemoryTradeStore(), disputes, control.ctx);
+    const buyer = { id: BUYER, email: "buyer-workspace@example.com", name: "Workspace Buyer" };
+    const supplier = { id: SUPPLIER, email: "supplier-workspace@example.com", name: "Workspace Supplier" };
+    const order = await trades.createOrder({
+      reference: "PO-WORKSPACE", supplierEmail: supplier.email!, supplierName: supplier.name, arbitratorId: ARBITRATOR,
+      assetType: "USDC", amountUnits: "500000", description: "Invited goods", deliveryDate: "2026-09-20", deliveryLocation: "PJ",
+      lineItems: [{ id: "line", description: "Goods", quantity: "1", unit: "lot", unitPriceUnits: "500000" }],
+    }, buyer);
+    await trades.createInvite(order.id, buyer);
+
+    const invitations = await trades.listInvitations(supplier);
+    expect(invitations).toMatchObject([{ orderId: order.id, reference: "PO-WORKSPACE", buyerName: "Workspace Buyer", amountUnits: "500000" }]);
+    expect(await trades.listInvitations({ id: "44444444-4444-4444-8444-444444444444", email: "someone-else@example.com" })).toEqual([]);
+
+    // The invited supplier reads the order without ever holding the token.
+    expect((await trades.getOrder(order.id, supplier)).reference).toBe("PO-WORKSPACE");
+
+    const accepted = await trades.acceptInvitation(order.id, supplier);
+    expect(accepted.status).toBe("supplier_confirmed");
+    expect(accepted.supplierId).toBe(SUPPLIER);
+    expect(await trades.listInvitations(supplier)).toEqual([]);
+  });
+
+  it("refuses a token-free acceptance from an account with no verified email", async () => {
+    const control = controlledContext();
+    const disputes = new DisputeService(new MemoryDisputeStore(), control.ctx);
+    const trades = new TradeService(new MemoryTradeStore(), disputes, control.ctx);
+    const buyer = { id: BUYER, email: "buyer-unverified@example.com", name: "Buyer" };
+    const order = await trades.createOrder({
+      reference: "PO-UNVERIFIED", supplierEmail: "supplier-unverified@example.com", arbitratorId: ARBITRATOR,
+      assetType: "USDC", amountUnits: "1000", description: "Goods", deliveryDate: "2026-09-20", deliveryLocation: "PJ",
+      lineItems: [{ id: "line", description: "Goods", quantity: "1", unit: "lot", unitPriceUnits: "1000" }],
+    }, buyer);
+    await trades.createInvite(order.id, buyer);
+    await expect(trades.acceptInvitation(order.id, { id: SUPPLIER }, { email: "supplier-unverified@example.com" }))
+      .rejects.toMatchObject({ code: "INVITE_EMAIL_REQUIRED" });
+    await expect(trades.getOrder(order.id, { id: SUPPLIER })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("cancels an outstanding invitation and withdraws its access", async () => {
+    const control = controlledContext();
+    const disputes = new DisputeService(new MemoryDisputeStore(), control.ctx);
+    const trades = new TradeService(new MemoryTradeStore(), disputes, control.ctx);
+    const buyer = { id: BUYER, email: "buyer-cancel@example.com", name: "Cancelling Buyer" };
+    const supplier = { id: SUPPLIER, email: "supplier-cancel@example.com", name: "Cancelled Supplier" };
+    const order = await trades.createOrder({
+      reference: "PO-CANCEL", supplierEmail: supplier.email!, arbitratorId: ARBITRATOR,
+      assetType: "USDC", amountUnits: "1000", description: "Goods", deliveryDate: "2026-09-20", deliveryLocation: "PJ",
+      lineItems: [{ id: "line", description: "Goods", quantity: "1", unit: "lot", unitPriceUnits: "1000" }],
+    }, buyer);
+    const invited = await trades.createInvite(order.id, buyer);
+
+    const cancelled = await trades.cancelInvite(order.id, buyer);
+    expect(cancelled.inviteId).toBeUndefined();
+    expect(await trades.listInvitations(supplier)).toEqual([]);
+    await expect(trades.acceptInvite(invited.inviteToken!, supplier)).rejects.toMatchObject({ code: "INVITE_EXPIRED" });
+    await expect(trades.acceptInvitation(order.id, supplier)).rejects.toMatchObject({ code: "INVITE_EXPIRED" });
+    await expect(trades.getOrder(order.id, supplier)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(trades.cancelInvite(order.id, buyer)).rejects.toMatchObject({ code: "NO_PENDING_INVITATION" });
+  });
+
+  it("lets a supplier issue the order and the invited buyer confirm it", async () => {
+    const control = controlledContext();
+    const disputes = new DisputeService(new MemoryDisputeStore(), control.ctx);
+    const trades = new TradeService(new MemoryTradeStore(), disputes, control.ctx);
+    const supplier = { id: SUPPLIER, email: "supplier-init@example.com", name: "FreshSource" };
+    const buyer = { id: BUYER, email: "buyer-init@example.com", name: "GreenBite" };
+    const order = await trades.createOrder({
+      reference: "PO-SUP-1", initiatorRole: "supplier", buyerEmail: buyer.email, buyerName: "GreenBite Trading", arbitratorId: ARBITRATOR,
+      supplierWalletAddress: `0x${"b".repeat(64)}`,
+      assetType: "USDC", amountUnits: "5000", description: "Olive oil", deliveryDate: "2026-09-20", deliveryLocation: "PJ",
+      lineItems: [{ id: "line", description: "Olive oil 5L", quantity: "50", unit: "tins", unitPriceUnits: "100" }],
+    }, supplier);
+    expect(order.status).toBe("awaiting_buyer");
+    expect(order.initiatorRole).toBe("supplier");
+    expect(order.supplierId).toBe(SUPPLIER);
+    expect(order.buyerId).toBeUndefined();
+
+    await expect(trades.createInvite(order.id, buyer)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const invited = await trades.createInvite(order.id, supplier);
+    expect(invited.inviteUrl).toContain("invite=");
+
+    const pending = await trades.listInvitations(buyer);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({ orderId: order.id, invitedRole: "buyer", counterpartyName: "FreshSource" });
+    expect((await trades.getOrder(order.id, buyer)).status).toBe("awaiting_buyer");
+
+    const confirmed = await trades.acceptInvitation(order.id, buyer);
+    expect(confirmed.status).toBe("supplier_confirmed");
+    expect(confirmed.buyerId).toBe(BUYER);
+    expect(confirmed.buyerEmail).toBe(buyer.email);
+    expect(confirmed.confirmation).toMatchObject({ confirmedBy: BUYER, confirmedRole: "buyer", termsVersion: "1.0", orderVersion: 1 });
+    expect(await trades.listInvitations(buyer)).toEqual([]);
+
+    const funded = await trades.recordFunding(order.id, buyer, {
+      packageId: "0x1", escrowObjectId: "0x2", transactionDigest: "funding-reference", buyerAddress: `0x${"a".repeat(64)}`,
+      supplierAddress: `0x${"b".repeat(64)}`, arbitratorAddress: `0x${"c".repeat(64)}`,
+    });
+    expect(funded.status).toBe("funded");
+    await expect(trades.recordFunding(order.id, supplier, {
+      packageId: "0x1", escrowObjectId: "0x2", transactionDigest: "funding-reference", buyerAddress: `0x${"a".repeat(64)}`,
+      supplierAddress: `0x${"b".repeat(64)}`, arbitratorAddress: `0x${"c".repeat(64)}`,
+    })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+
+  it("records the supplier's confirmation with the accepted terms version", async () => {
+    const control = controlledContext();
+    const disputes = new DisputeService(new MemoryDisputeStore(), control.ctx);
+    const trades = new TradeService(new MemoryTradeStore(), disputes, control.ctx);
+    const buyer = { id: BUYER, email: "buyer-terms@example.com", name: "Buyer" };
+    const supplier = { id: SUPPLIER, email: "supplier-terms@example.com", name: "Supplier" };
+    const order = await trades.createOrder({
+      reference: "PO-TERMS", supplierEmail: supplier.email, arbitratorId: ARBITRATOR,
+      assetType: "USDC", amountUnits: "1000", description: "Goods", deliveryDate: "2026-09-20", deliveryLocation: "PJ",
+      lineItems: [{ id: "line", description: "Goods", quantity: "1", unit: "lot", unitPriceUnits: "1000" }],
+    }, buyer);
+    await trades.createInvite(order.id, buyer);
+    const confirmed = await trades.acceptInvitation(order.id, supplier);
+    expect(confirmed.confirmation).toMatchObject({ confirmedBy: SUPPLIER, confirmedRole: "supplier", email: supplier.email, termsVersion: "1.0" });
+  });
+
+  it("settles a fully accepted delivery against the release transaction", async () => {
+    const control = controlledContext();
+    const disputes = new DisputeService(new MemoryDisputeStore(), control.ctx);
+    const trades = new TradeService(new MemoryTradeStore(), disputes, control.ctx);
+    const buyer = { id: BUYER, email: "buyer-accept@example.com", name: "Buyer" };
+    const supplier = { id: SUPPLIER, email: "supplier-accept@example.com", name: "Supplier" };
+    const order = await trades.createOrder({
+      reference: "PO-ACCEPT", supplierEmail: supplier.email, arbitratorId: ARBITRATOR,
+      assetType: "USDC", amountUnits: "3000", description: "Goods", deliveryDate: "2026-09-20", deliveryLocation: "PJ",
+      lineItems: [{ id: "a", description: "Oil", quantity: "10", unit: "drums", unitPriceUnits: "200" }, { id: "b", description: "Flour", quantity: "5", unit: "bags", unitPriceUnits: "200" }],
+    }, buyer);
+    await trades.createInvite(order.id, buyer);
+    await trades.acceptInvitation(order.id, supplier);
+    await trades.recordFunding(order.id, buyer, { packageId: "0x1", escrowObjectId: "0x2", transactionDigest: "fund", buyerAddress: `0x${"a".repeat(64)}`, supplierAddress: `0x${"b".repeat(64)}`, arbitratorAddress: `0x${"c".repeat(64)}` });
+    await expect(trades.acceptDelivery(order.id, buyer, { transactionDigest: "release-1" })).rejects.toMatchObject({ code: "INVALID_STATE" });
+    await trades.markShipment(order.id, supplier);
+    await trades.markDelivered(order.id, buyer);
+
+    await expect(trades.acceptDelivery(order.id, supplier, { transactionDigest: "release-1" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(trades.acceptDelivery(order.id, buyer, {
+      transactionDigest: "release-1", inspection: { lines: [{ lineId: "a", accepted: "9", missing: "1", damaged: "0" }, { lineId: "b", accepted: "5", missing: "0", damaged: "0" }] },
+    })).rejects.toMatchObject({ code: "INVALID_INSPECTION" });
+
+    const settled = await trades.acceptDelivery(order.id, buyer, {
+      transactionDigest: "release-1", receiptObjectId: "0x9",
+      inspection: { lines: [{ lineId: "a", accepted: "10", missing: "0", damaged: "0" }, { lineId: "b", accepted: "5", missing: "0", damaged: "0" }], note: "All good" },
+    });
+    expect(settled.status).toBe("settled");
+    expect(settled.settlement).toMatchObject({ buyerUnits: "0", supplierUnits: "3000", transactionDigest: "release-1", receiptObjectId: "0x9", verifiedOnChain: false, source: "full_acceptance" });
+    expect(settled.inspection?.lines).toHaveLength(2);
+    expect(settled.inspection?.note).toBe("All good");
+    await expect(trades.acceptDelivery(order.id, buyer, { transactionDigest: "release-2" })).rejects.toMatchObject({ code: "INVALID_STATE" });
+  });
+
+  it("stores an attached document and serves it to both parties only", async () => {
+    const control = controlledContext();
+    const disputes = new DisputeService(new MemoryDisputeStore(), control.ctx);
+    const trades = new TradeService(new MemoryTradeStore(), disputes, control.ctx);
+    const buyer = { id: BUYER, email: "buyer-doc@example.com", name: "Buyer" };
+    const supplier = { id: SUPPLIER, email: "supplier-doc@example.com", name: "Supplier" };
+    const stranger = { id: "44444444-4444-4444-8444-444444444444", email: "other@example.com", name: "Other" };
+    const order = await trades.createOrder({
+      reference: "PO-DOC", supplierEmail: supplier.email, arbitratorId: ARBITRATOR,
+      assetType: "USDC", amountUnits: "1000", description: "Goods", deliveryDate: "2026-09-20", deliveryLocation: "PJ",
+      lineItems: [{ id: "line", description: "Goods", quantity: "1", unit: "lot", unitPriceUnits: "1000" }],
+    }, buyer);
+    await trades.createInvite(order.id, buyer);
+    await trades.acceptInvitation(order.id, supplier);
+
+    const bytes = new TextEncoder().encode("DELIVERY ORDER DO-1 damaged cartons: 13");
+    const withDocument = await trades.attachDocument(order.id, buyer, { kind: "claim_evidence", name: "delivery order.txt", mimeType: "text/plain", bytes, transcript: "DELIVERY ORDER DO-1" });
+    expect(withDocument.documents).toHaveLength(1);
+    const document = withDocument.documents![0]!;
+    expect(document).toMatchObject({ kind: "claim_evidence", name: "delivery order.txt", uploadedBy: BUYER, uploadedRole: "buyer", sizeBytes: bytes.byteLength, transcript: "DELIVERY ORDER DO-1" });
+    expect(document.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(document.storagePath).toBe(`orders/${order.id}/${document.id}`);
+
+    const read = await trades.readDocument(order.id, supplier, document.id);
+    expect(new TextDecoder().decode(read.bytes)).toContain("damaged cartons: 13");
+    expect(read.mimeType).toBe("text/plain");
+    await expect(trades.readDocument(order.id, stranger, document.id)).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(trades.attachDocument(order.id, supplier, { kind: "poster" as never, name: "x", mimeType: "text/plain", bytes })).rejects.toMatchObject({ code: "INVALID_DOCUMENT" });
+    await expect(trades.attachDocument(order.id, supplier, { kind: "dispatch_evidence", name: "empty.txt", mimeType: "text/plain", bytes: new Uint8Array() })).rejects.toMatchObject({ code: "INVALID_DOCUMENT" });
+    const supplierDoc = await trades.attachDocument(order.id, supplier, { kind: "dispatch_evidence", name: "dispatch.txt", mimeType: "text/plain", bytes });
+    expect(supplierDoc.documents).toHaveLength(2);
+    expect(supplierDoc.documents![1]!.uploadedRole).toBe("supplier");
+  });
 });

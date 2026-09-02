@@ -34,6 +34,10 @@ export const TESTNET_USDC_TYPE =
 
 export const SUI_TYPE = "0x2::sui::SUI";
 
+/** Arbitrator wallet written into every escrow. Set NEXT_PUBLIC_DEFAULT_ARBITRATOR_ADDRESS to the real arbitrator address. */
+export const DEFAULT_ARBITRATOR_ADDRESS =
+  process.env.NEXT_PUBLIC_DEFAULT_ARBITRATOR_ADDRESS?.trim() || `0x${"c".repeat(64)}`;
+
 export const explorerTransactionUrl = (digest: string) =>
   `https://suiscan.xyz/testnet/tx/${digest}`;
 

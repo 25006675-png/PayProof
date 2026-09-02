@@ -1,0 +1,10 @@
+DISPATCH NOTE DN-4471
+Shipper: FreshSource Foods Sdn Bhd
+Dispatched: 27 August 2026, 09:10
+Carrier: DHL Express, tracking DHL 8812 0044 MY
+
+Item                Quantity   Packing            Condition at dispatch
+Cooking oil 5L      100 ctn    5 pallets, wrapped  All cartons intact, no leaks
+
+Checked by: Lim Wei Jie (warehouse lead)   Signature: [signed]
+Carrier acknowledgement: goods received in good order, 5 pallets. Signature: [signed]

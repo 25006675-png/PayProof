@@ -1,0 +1,144 @@
+/* Round five: motion inside the app, live status glow, role badge vocabulary. */
+
+/* Lift cards */
+.lift{will-change:transform;border-radius:var(--radius-lg)}
+.ledger-cell.lift{border-radius:0}
+.lift-row{transition:transform .18s cubic-bezier(.22,1,.36,1),box-shadow .18s cubic-bezier(.22,1,.36,1),background .18s ease-out}
+.queue li.lift-row:hover,.proposal.lift-row:hover,.register-table tbody tr.lift-row:hover td{background:#f8fafd}
+.proposal.lift-row:hover{transform:translateY(-2px);box-shadow:0 10px 24px rgba(13,29,48,.1)}
+.wallet-actions button:hover{box-shadow:0 8px 20px rgba(0,0,0,.18)}
+
+/* Stepper connector lines drawn as elements so they can animate */
+.stepper-step:not(:last-child):after{display:none}
+.stepper-line{position:absolute;left:38px;right:8px;top:14px;height:2px;background:var(--rule);transform-origin:left center;z-index:0}
+.stepper-line-done{background:var(--blue)}
+.stepper-current .stepper-dot{animation:ring 2.4s ease-in-out infinite}
+@keyframes ring{0%,100%{box-shadow:0 0 0 4px rgba(34,104,221,.15)}50%{box-shadow:0 0 0 7px rgba(34,104,221,.06)}}
+.stepper-flag .stepper-dot{animation:ring-red 2.4s ease-in-out infinite}
+@keyframes ring-red{0%,100%{box-shadow:0 0 0 4px rgba(169,58,47,.14)}50%{box-shadow:0 0 0 7px rgba(169,58,47,.05)}}
+
+/* Live status pills breathe */
+.pill-live{position:relative;animation:pill-glow 2.2s ease-in-out infinite}
+@keyframes pill-glow{0%,100%{box-shadow:0 0 0 0 rgba(34,104,221,.0)}50%{box-shadow:0 0 0 5px rgba(34,104,221,.12)}}
+.pill-danger.pill-live{animation-name:pill-glow-red}
+@keyframes pill-glow-red{0%,100%{box-shadow:0 0 0 0 rgba(169,58,47,0)}50%{box-shadow:0 0 0 5px rgba(169,58,47,.12)}}
+.pill-attention.pill-live{animation-name:pill-glow-amber}
+@keyframes pill-glow-amber{0%,100%{box-shadow:0 0 0 0 rgba(151,84,25,0)}50%{box-shadow:0 0 0 5px rgba(151,84,25,.12)}}
+
+/* Claim stages stagger in */
+.claim-stages li{animation:reveal-up .3s cubic-bezier(.22,1,.36,1) both}
+.claim-stages li:nth-child(2){animation-delay:.08s}.claim-stages li:nth-child(3){animation-delay:.16s}.claim-stages li:nth-child(4){animation-delay:.24s}
+
+/* Success notice check pops */
+.notice-success svg{animation:pop-in .35s cubic-bezier(.22,1,.36,1) both}
+
+/* Register cell: company first, badge below */
+.cell-party{margin-top:0;margin-bottom:6px;font-size:14px}
+.cell-party strong{font-weight:650}
+
+@media(prefers-reduced-motion:reduce){
+  .stepper-current .stepper-dot,.stepper-flag .stepper-dot,.pill-live,.claim-stages li,.notice-success svg{animation:none}
+  .lift-row,.proposal.lift-row:hover{transition:none;transform:none}
+}
+/* The rail sticks as one unit and scrolls inside itself; the action box no longer pins over the details */
+.order-rail{position:sticky;top:146px;max-height:calc(100vh - 158px);overflow-y:auto;overscroll-behavior:contain;padding-right:2px}
+.rail-actions{position:static;z-index:auto}
+.rail-actions .claim-side-panel{position:static}
+@media(max-width:1050px){.order-rail{position:static;max-height:none;overflow:visible}}
+/* Labels people read as controls use the secondary ink; muted grey stays for helper text under a value */
+.phase-tab{color:var(--ink-2)}
+.phase-tab:hover{color:var(--navy)}
+.segment{color:var(--ink-2)}
+.sample-tag{color:var(--ink-2);border-color:var(--rule-strong)}
+.data-table th{color:var(--ink-2)}
+.rail-group h3{color:var(--ink)}
+.rail-list dt,.fact-list dt,.fact-strip dt{color:var(--ink-2)}
+.action-counterparty .action-owner,.action-none .action-owner{color:var(--ink-2)}
+.owner-counterparty,.owner-none{color:var(--ink-2)}
+.ledger-label{color:var(--ink)}
+.toggle{color:var(--ink)}
+.stepper-label{color:var(--ink-2)}
+.claim-stages{color:var(--ink-2)}
+.report-tab{color:var(--ink-2)}
+.timeline time{color:var(--ink-2)}
+/* Help tips in the ledger and the header fact strip open downward and are never clipped */
+.ledger{overflow:visible}
+.ledger-cell:first-child{border-radius:var(--radius-lg) 0 0 var(--radius-lg)}
+.ledger-cell:last-child{border-radius:0 var(--radius-lg) var(--radius-lg) 0}
+.ledger .help-hint-tip,.fact-strip .help-hint-tip,.wallet-card-head .help-hint-tip{bottom:auto;top:calc(100% + 8px)}
+.ledger .help-hint-tip:after,.fact-strip .help-hint-tip:after,.wallet-card-head .help-hint-tip:after{top:auto;bottom:100%;border-top-color:transparent;border-bottom-color:var(--ink)}
+
+/* Keep both commercial parties explicit in the order register. Stronger row rules
+   restore the darker ledger rhythm used in the first register treatment. */
+.register-table{min-width:1040px}
+.register-table tbody td{border-bottom-color:rgba(13,29,48,.24)}
+.register-table .cell-party{margin-top:0;display:grid;gap:3px}
+.register-table .cell-party strong{font-size:13.5px;line-height:1.35}
+.register-table .cell-party small{margin:0;color:var(--blue);font-size:11px;font-weight:700}
+.register-table th:nth-child(2),.register-table td:nth-child(2),
+.register-table th:nth-child(3),.register-table td:nth-child(3){min-width:150px}
+
+@media(max-width:760px){
+  .register-table{min-width:760px}
+  .register-table th:nth-child(2),.register-table td:nth-child(2),
+  .register-table th:nth-child(3),.register-table td:nth-child(3),
+  .register-table th:nth-child(4),.register-table td:nth-child(4),
+  .register-table th:nth-child(7),.register-table td:nth-child(7){display:table-cell}
+  .register-table th:nth-child(5),.register-table td:nth-child(5),
+  .register-table th:nth-child(6),.register-table td:nth-child(6){display:none}
+}
+@media(max-width:1050px){.ledger-cell:first-child,.ledger-cell:last-child{border-radius:0}}
+/* Queue rows: grey only the description line, never the badges and pills inside it */
+.queue-main span{color:inherit}
+.queue-main>span{color:var(--muted)}
+.queue-main .role-tag-buyer{color:#174ca2}
+.queue-main .role-tag-supplier{color:#675500}
+.queue-main .pill-attention{color:var(--amber-ink)}
+.queue-main .pill-progress{color:#174ca2}
+.queue-main .pill-success{color:var(--green-ink)}
+.queue-main .pill-danger{color:var(--red-ink)}
+.queue-main .pill-neutral{color:#52657b}
+.queue-main .sample-tag{color:var(--ink-2)}
+/* The six-step bar pins under the header while the order columns scroll past it.
+   It sits in a block container rather than the shell grid, because a grid item
+   can only stick inside its own row and would never move. */
+.order-body{display:block}
+.order-body .order-grid{margin-top:18px}
+.stepper-bar{position:sticky;top:64px;z-index:15}
+.stepper-bar .stepper{box-shadow:0 8px 18px rgba(13,29,48,.09)}
+@media(max-width:1050px){
+  /* Below this width the bar wraps to a second row, too tall to hold on screen. */
+  .stepper-bar{position:static}
+  .stepper-bar .stepper{box-shadow:none}
+}
+
+/* Order header, folio treatment from variant 03: the identity block becomes a solid
+   navy plane and the fact strip stays white, so the card reads as one object while
+   context separates cleanly from the work below. The role stripe on top is unchanged. */
+.order-header{padding:0;gap:0;background:var(--navy);color:#fff;border-right-color:var(--navy);border-bottom-color:var(--navy);border-left-color:var(--navy)}
+.order-header-top{padding:22px 24px 20px}
+.order-header-top p{color:#cfe0ff}
+.order-header .order-head-total>span,.order-header .order-head-total>small,.order-header .order-head-total strong small{color:#cfe0ff}
+.order-header .sample-tag{border-color:rgba(255,255,255,.45);color:#dce7fb}
+.order-header .fact-strip{margin:0;padding:16px 24px 18px;border-top:0;border-radius:0 0 11px 11px;background:var(--surface);color:var(--ink)}
+@media(max-width:760px){
+  .order-header-top{padding:16px}
+  .order-header .fact-strip{padding:14px 16px 16px}
+}
+/* The buyer stripe needs a lighter blue to stay visible on the navy plane. */
+.order-header-buyer{border-top-color:#5c9dff}
+/* Supplier orders take the same folio treatment in the yellow half of the palette: a deep
+   gold plane with white type, so the role is readable from the card and not only the stripe. */
+.order-header-supplier{background:var(--yellow-ink);border-right-color:var(--yellow-ink);border-bottom-color:var(--yellow-ink);border-left-color:var(--yellow-ink)}
+.order-header-supplier .order-header-top p,
+.order-header-supplier .order-head-total>span,
+.order-header-supplier .order-head-total>small,
+.order-header-supplier .order-head-total strong small{color:#f4e6a6}
+.order-header-supplier .sample-tag{border-color:rgba(255,255,255,.5);color:#f7edc0}
+/* The order card now carries the role in its own colour, so the repeat of the role
+   stripe on the action panel adds nothing. */
+.action-panel-buyer,.action-panel-supplier{border-top:1px solid var(--rule)}
+/* The side marker in the register follows the role colours: blue when you are buying, the
+   same gold as the supplier order card when you are supplying. */
+.register-table .cell-party small{font-size:12px}
+.register-table .cell-party .side-supplying{color:var(--yellow-ink)}

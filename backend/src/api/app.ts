@@ -8,12 +8,20 @@ import type { DisputeService } from "../service/dispute-service.js";
 import type { TradeService } from "../service/trade-service.js";
 import type { SuiSettlementVerifier } from "../integrations/sui-settlement.js";
 import { issueDemoGoogleSession } from "./demo-auth.js";
+import type { IdentityService } from "../service/identity-service.js";
+import type { ZkLoginService } from "../service/zklogin-service.js";
+import type { OrganizationService } from "../service/organization-service.js";
+import type { EnokiSponsor } from "../integrations/enoki-sponsor.js";
 
 export interface TokenVerifier { verify(token: string): Promise<Actor>; }
 
 const amount = z.string().regex(/^(0|[1-9]\d*)$/);
 const proposalSchema = z.object({ buyerUnits: amount, supplierUnits: amount, summary: z.string().min(1).max(2000), reasoning: z.string().max(10_000).optional() });
-const fileSchema = z.object({ storagePath: z.string().min(1), sha256: z.string().regex(/^[a-fA-F0-9]{64}$/), mimeType: z.string().min(1), sizeBytes: z.number().int().nonnegative().max(20 * 1024 * 1024) });
+const fileSchema = z.object({
+  storagePath: z.string().min(1), sha256: z.string().regex(/^[a-fA-F0-9]{64}$/), mimeType: z.string().min(1),
+  sizeBytes: z.number().int().nonnegative().max(10 * 1024 * 1024),
+  transcript: z.string().max(50_000).optional(),
+});
 const suiAddress = z.string().regex(/^0x[0-9a-fA-F]{1,64}$/);
 const suiObjectId = suiAddress;
 const transactionDigest = z.string().regex(/^[1-9A-HJ-NP-Za-km-z]{20,128}$/);
@@ -32,9 +40,26 @@ const lineItemSchema = z.object({
   quantity: amount, unit: z.string().min(1).max(64), unitPriceUnits: amount,
 });
 const tradeOrderSchema = z.object({
-  reference: z.string().min(1).max(128), supplierEmail: z.string().email(), supplierName: z.string().max(256).optional(), supplierWalletAddress: suiAddress.optional(), arbitratorWalletAddress: suiAddress.optional(),
+  reference: z.string().min(1).max(128), initiatorRole: z.enum(["buyer", "supplier"]).optional(),
+  supplierEmail: z.string().email().optional(), supplierName: z.string().max(256).optional(), supplierWalletAddress: suiAddress.optional(), arbitratorWalletAddress: suiAddress.optional(),
+  buyerEmail: z.string().email().optional(), buyerName: z.string().max(256).optional(),
   arbitratorId: uuid, assetType: z.string().min(1).max(256), amountUnits: amount, description: z.string().min(1).max(20_000),
   deliveryDate: z.string().min(1).max(128), deliveryLocation: z.string().min(1).max(500), lineItems: z.array(lineItemSchema).min(1).max(100),
+  buyerOrganizationId: uuid.optional(), supplierOrganizationId: uuid.optional(),
+}).refine((value) => (value.initiatorRole === "supplier" ? Boolean(value.buyerEmail) : Boolean(value.supplierEmail)), {
+  message: "A buyer-initiated order needs supplierEmail; a supplier-initiated order needs buyerEmail",
+});
+const inspectionSchema = z.object({
+  lines: z.array(z.object({ lineId: z.string().min(1).max(128), accepted: amount, missing: amount, damaged: amount })).min(1).max(100),
+  note: z.string().max(20_000).optional(),
+});
+const shipmentSchema = z.object({
+  carrier: z.string().max(128).optional(), trackingNumber: z.string().max(128).optional(),
+  dispatchedAt: z.string().max(64).optional(), expectedAt: z.string().max(64).optional(),
+});
+const deliverySchema = z.object({ reference: z.string().max(128).optional() });
+const acceptDeliverySchema = z.object({
+  transactionDigest: z.string().min(1).max(256), receiptObjectId: z.string().min(1).max(256).optional(), inspection: inspectionSchema.optional(),
 });
 const fundingSchema = z.object({
   packageId: z.string().min(1).max(128), escrowObjectId: z.string().min(1).max(128), transactionDigest: z.string().min(1).max(128),
@@ -42,10 +67,14 @@ const fundingSchema = z.object({
   verificationStatus: z.enum(["verified_on_chain", "external_reference"]).optional(),
 });
 const undisputedReleaseSchema = z.object({ transactionDigest });
+const acceptInviteSchema = z.object({
+  email: z.string().email().optional(), name: z.string().max(256).optional(), supplierWalletAddress: suiAddress.optional(),
+});
 const openTradeDisputeSchema = z.object({
   disputeTransactionDigest: transactionDigest, disputedUnits: amount, requestedBuyerUnits: amount,
   claim: z.string().min(1).max(20_000), evidenceStatement: z.string().min(1).max(20_000), evidenceFiles: z.array(fileSchema).max(20).optional(),
   negotiationDeadline: z.string().datetime(), maxHumanRounds: z.number().int().min(1).max(5).optional(),
+  inspection: inspectionSchema.optional(),
 });
 const openSchema = z.object({
   id: z.string().uuid().optional(), orderId: z.string().min(1).max(128), buyerId: z.string().uuid(), supplierId: z.string().uuid(), arbitratorId: z.string().uuid(),
@@ -65,6 +94,10 @@ export function createApp(
   settlementVerifier?: SuiSettlementVerifier,
   trades?: TradeService,
   demoAuthEnabled = false,
+  identity?: IdentityService,
+  zkLogin?: ZkLoginService,
+  organizations?: OrganizationService,
+  sponsor?: EnokiSponsor,
 ) {
   const app = new Hono<{ Variables: { actor: Actor } }>();
   app.use("*", cors({
@@ -75,7 +108,11 @@ export function createApp(
   app.onError((error, c) => {
     if (error instanceof DomainError) return c.json({ error: error.code, message: error.message }, error.status as any);
     if (error instanceof z.ZodError) return c.json({ error: "INVALID_REQUEST", issues: error.issues }, 400);
-    console.error("Unhandled PayProof backend error", { name: error instanceof Error ? error.name : "UnknownError" });
+    console.error("Unhandled PayProof backend error", {
+      name: error instanceof Error ? error.name : "UnknownError",
+      message: error instanceof Error ? error.message : String(error),
+      stack: process.env.NODE_ENV === "development" && error instanceof Error ? error.stack : undefined,
+    });
     return c.json({ error: "INTERNAL_ERROR" }, 500);
   });
   app.get("/health", (c) => c.json({ ok: true, service: "payproof-disputes" }));
@@ -84,25 +121,113 @@ export function createApp(
     const body = z.object({ email: z.string().email(), name: z.string().min(1).max(256) }).parse(await c.req.json());
     return c.json(issueDemoGoogleSession(body.email, body.name));
   });
+  if (identity) {
+    app.post("/auth/wallet/challenge", async (c) => {
+      const body = z.object({ address: suiAddress }).parse(await c.req.json());
+      const origin = c.req.header("origin") ?? process.env.FRONTEND_ORIGIN ?? "";
+      if (!/^https?:\/\//.test(origin))
+        throw new DomainError("INVALID_ORIGIN", "A valid application origin is required", 400);
+      return c.json(await identity.createWalletChallenge(body.address, origin));
+    });
+    app.post("/auth/wallet/verify", async (c) => {
+      const body = z.object({
+        challengeId: uuid,
+        address: suiAddress,
+        signature: z.string().min(20).max(4096),
+      }).parse(await c.req.json());
+      return c.json(await identity.verifyWalletChallenge(body));
+    });
+  }
   app.use("/v1/*", async (c, next) => {
     const header = c.req.header("authorization") ?? "";
     if (!header.startsWith("Bearer ")) throw new DomainError("UNAUTHORIZED", "Bearer token required", 401);
     c.set("actor", await verifier.verify(header.slice(7)));
     await next();
   });
+  app.get("/v1/me", (c) => c.json(c.get("actor")));
+  if (sponsor) {
+    // Signed in callers only, and the sponsor itself restricts which move calls it will pay for.
+    app.post("/v1/sui/sponsor", async (c) => {
+      const body = z.object({
+        transactionKindBytes: z.string().min(1).max(200_000),
+        sender: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
+      }).parse(await c.req.json());
+      return c.json(await sponsor.sponsor(body));
+    });
+    app.post("/v1/sui/sponsor/:digest/execute", async (c) => {
+      const body = z.object({ signature: z.string().min(1).max(20_000) }).parse(await c.req.json());
+      return c.json(await sponsor.execute(c.req.param("digest"), body.signature));
+    });
+  }
+  if (organizations) {
+    app.get("/v1/workspace", async (c) => c.json(await organizations.workspace(c.get("actor"))));
+    app.post("/v1/organizations", async (c) => {
+      const body = z.object({ name: z.string().min(2).max(160) }).parse(await c.req.json());
+      return c.json(await organizations.create(c.get("actor"), body.name), 201);
+    });
+  }
+  if (zkLogin) {
+    app.post("/v1/auth/zklogin/complete", async (c) => {
+      const body = z.object({
+        googleIdToken: z.string().min(100).max(20_000),
+        ephemeralPublicKey: z.string().min(40).max(100),
+        randomness: z.string().regex(/^\d+$/).max(100),
+        maxEpoch: z.number().int().positive().safe(),
+      }).parse(await c.req.json());
+      return c.json(await zkLogin.complete(c.get("actor").id, body));
+    });
+  }
   if (trades) {
     app.get("/v1/orders", async (c) => c.json(await trades.listOrders(c.get("actor"))));
     app.post("/v1/orders", async (c) => c.json(await trades.createOrder(tradeOrderSchema.parse(await c.req.json()), c.get("actor")), 201));
     app.get("/v1/orders/:id", async (c) => c.json(await trades.getOrder(c.req.param("id"), c.get("actor"))));
     app.post("/v1/orders/:id/invite", async (c) => c.json(await trades.createInvite(c.req.param("id"), c.get("actor"))));
+    app.post("/v1/orders/:id/invite/cancel", async (c) => c.json(await trades.cancelInvite(c.req.param("id"), c.get("actor"))));
+    app.get("/v1/invitations", async (c) => c.json(await trades.listInvitations(c.get("actor"))));
+    app.post("/v1/orders/:id/accept", async (c) => {
+      const body = acceptInviteSchema.parse(await c.req.json().catch(() => ({})));
+      return c.json(await trades.acceptInvitation(c.req.param("id"), c.get("actor"), body));
+    });
+    app.get("/v1/invites/:token", async (c) => c.json(await trades.previewInvite(c.req.param("token"), c.get("actor"))));
     app.post("/v1/invites/:token/accept", async (c) => {
-      const body = z.object({ email: z.string().email().optional(), name: z.string().max(256).optional(), supplierWalletAddress: suiAddress.optional() }).parse(await c.req.json().catch(() => ({})));
+      const body = acceptInviteSchema.parse(await c.req.json().catch(() => ({})));
       return c.json(await trades.acceptInvite(c.req.param("token"), c.get("actor"), body));
     });
     app.post("/v1/orders/:id/funding", async (c) => c.json(await trades.recordFunding(c.req.param("id"), c.get("actor"), fundingSchema.parse(await c.req.json()))));
     app.post("/v1/orders/:id/undisputed-release", async (c) => c.json(await trades.recordUndisputedRelease(c.req.param("id"), c.get("actor"), undisputedReleaseSchema.parse(await c.req.json()))));
-    app.post("/v1/orders/:id/shipment", async (c) => c.json(await trades.markShipment(c.req.param("id"), c.get("actor"))));
-    app.post("/v1/orders/:id/delivery", async (c) => c.json(await trades.markDelivered(c.req.param("id"), c.get("actor"))));
+    app.post("/v1/orders/:id/shipment", async (c) => {
+      const body = shipmentSchema.parse(await c.req.json().catch(() => ({})));
+      return c.json(await trades.markShipment(c.req.param("id"), c.get("actor"), body));
+    });
+    app.post("/v1/orders/:id/delivery", async (c) => {
+      const body = deliverySchema.parse(await c.req.json().catch(() => ({})));
+      return c.json(await trades.markDelivered(c.req.param("id"), c.get("actor"), body));
+    });
+    app.post("/v1/orders/:id/documents", async (c) => {
+      const body = await c.req.parseBody();
+      const file = body.file;
+      if (!(file instanceof File)) throw new DomainError("INVALID_DOCUMENT", "Attach a file under the 'file' field", 400);
+      const kind = String(body.kind ?? "");
+      const transcript = typeof body.transcript === "string" ? body.transcript : undefined;
+      let extracted: Record<string, unknown> | undefined;
+      if (typeof body.extracted === "string" && body.extracted.trim()) {
+        try { extracted = JSON.parse(body.extracted) as Record<string, unknown>; } catch { throw new DomainError("INVALID_DOCUMENT", "extracted must be JSON", 400); }
+      }
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const order = await trades.attachDocument(c.req.param("id"), c.get("actor"), { kind: kind as never, name: file.name, mimeType: file.type, bytes, transcript, extracted });
+      return c.json(order, 201);
+    });
+    app.get("/v1/orders/:id/documents/:documentId", async (c) => {
+      const { document, bytes, mimeType } = await trades.readDocument(c.req.param("id"), c.get("actor"), c.req.param("documentId"));
+      const safeName = document.name.replace(/[^\w.\- ]+/g, "_");
+      return c.body(new Uint8Array(bytes).buffer as ArrayBuffer, 200, {
+        "content-type": mimeType,
+        "content-length": String(bytes.byteLength),
+        "content-disposition": `inline; filename="${safeName}"`,
+        "cache-control": "private, no-store",
+      });
+    });
+    app.post("/v1/orders/:id/acceptance", async (c) => c.json(await trades.acceptDelivery(c.req.param("id"), c.get("actor"), acceptDeliverySchema.parse(await c.req.json()))));
     app.post("/v1/orders/:id/dispute", async (c) => c.json(await trades.openDispute(c.req.param("id"), c.get("actor"), openTradeDisputeSchema.parse(await c.req.json()))));
   }
   app.post("/v1/disputes", async (c) => c.json(await service.open(openSchema.parse(await c.req.json()), c.get("actor")), 201));

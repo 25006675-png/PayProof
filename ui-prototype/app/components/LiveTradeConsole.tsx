@@ -42,6 +42,7 @@ import {
   SUI_TYPE,
   TESTNET_USDC_TYPE,
 } from "@/lib/sui-dapp-kit";
+import { loadZkLoginSession, zkLoginSigner, type ZkLoginSession } from "@/lib/auth";
 
 const DEMO_ARBITRATOR_ID = "99999999-9999-4999-8999-999999999999";
 const DEFAULT_SUPPLIER_ADDRESS = `0x${"b".repeat(64)}`;
@@ -109,6 +110,7 @@ export function LiveTradeConsole() {
   const client = useCurrentClient();
   const dAppKit = useDAppKit();
   const [session, setSession] = useState<DemoSession | null>(null);
+  const [zkSession, setZkSession] = useState<ZkLoginSession | null>(null);
   const [role, setRole] = useState<Role>("buyer");
   const [orders, setOrders] = useState<TradeOrder[]>([]);
   const [activeOrder, setActiveOrder] = useState<TradeOrder | null>(null);
@@ -126,7 +128,7 @@ export function LiveTradeConsole() {
     supplierEmail: "supplier@freshsource.demo",
     supplierName: "FreshSource Foods Sdn. Bhd.",
     amount: "30000",
-    asset: "USDC",
+    asset: "SUI",
     description: "Premium cooking oils, 100 cartons",
     deliveryDate: "08 Sep 2026",
     deliveryLocation: "GreenBite Receiving Bay · PJ",
@@ -158,7 +160,8 @@ export function LiveTradeConsole() {
       ? "USDC"
       : activeOrder
         ? "SUI"
-        : orderForm.asset;
+      : orderForm.asset;
+  const signingAddress = account?.address ?? zkSession?.address;
   const latestProposal =
     dispute?.proposals.find((proposal) => proposal.status === "open") ??
     dispute?.proposals.at(-1);
@@ -177,6 +180,7 @@ export function LiveTradeConsole() {
       : undefined;
 
   useEffect(() => {
+    setZkSession(loadZkLoginSession());
     const current = loadSession();
     if (current) {
       setSession(current);
@@ -192,6 +196,16 @@ export function LiveTradeConsole() {
       }
     });
   }, []);
+
+  async function signAndExecute(transaction: Transaction) {
+    if (zkSession) {
+      return client.signAndExecuteTransaction({
+        transaction,
+        signer: zkLoginSigner(zkSession),
+      });
+    }
+    return dAppKit.signAndExecuteTransaction({ transaction });
+  }
 
   useEffect(() => {
     if (!session) return;
@@ -227,6 +241,10 @@ export function LiveTradeConsole() {
     try {
       const result = await apiRequest<TradeOrder[]>("/v1/orders");
       setOrders(result);
+      // Opened from an order page: select that order straight away.
+      const requested = new URLSearchParams(window.location.search).get("order");
+      const preselected = !activeOrder && requested ? result.find((order) => order.id === requested) : undefined;
+      if (preselected) setActiveOrder(preselected);
       if (activeOrder) {
         const next = result.find((order) => order.id === activeOrder.id);
         if (next) setActiveOrder(next);
@@ -407,7 +425,7 @@ export function LiveTradeConsole() {
           body: JSON.stringify({
             email: session.user.email,
             name: session.user.name,
-            supplierWalletAddress: account?.address,
+            supplierWalletAddress: signingAddress,
           }),
         },
       );
@@ -426,8 +444,8 @@ export function LiveTradeConsole() {
   }
 
   async function fundEscrow() {
-    if (!activeOrder || !account) {
-      setError("Connect the buyer wallet before funding escrow.");
+    if (!activeOrder || !signingAddress) {
+      setError("Sign in with Google or connect the buyer wallet before funding escrow.");
       return;
     }
     if (!activeOrder.supplierId) {
@@ -458,9 +476,7 @@ export function LiveTradeConsole() {
           tx.object.clock(),
         ],
       });
-      const result = (await dAppKit.signAndExecuteTransaction({
-        transaction: tx,
-      })) as any;
+      const result = (await signAndExecute(tx)) as any;
       if (result.FailedTransaction)
         throw new Error(
           result.FailedTransaction.status?.error?.message ??
@@ -490,7 +506,7 @@ export function LiveTradeConsole() {
             packageId: ESCROW_PACKAGE_ID,
             escrowObjectId: objectId,
             transactionDigest: digest,
-            buyerAddress: account.address,
+            buyerAddress: signingAddress,
             supplierAddress,
             arbitratorAddress,
           }),
@@ -532,7 +548,7 @@ export function LiveTradeConsole() {
   }
 
   async function releaseUndisputed() {
-    if (!activeOrder?.funding || !account) {
+    if (!activeOrder?.funding || !signingAddress) {
       setError(
         "Connect the supplier wallet before releasing the undisputed balance.",
       );
@@ -548,9 +564,7 @@ export function LiveTradeConsole() {
         typeArguments: [activeOrder.assetType],
         arguments: [tx.object(activeOrder.funding.escrowObjectId)],
       });
-      const result = (await dAppKit.signAndExecuteTransaction({
-        transaction: tx,
-      })) as any;
+      const result = (await signAndExecute(tx)) as any;
       if (result.FailedTransaction)
         throw new Error(
           result.FailedTransaction.status?.error?.message ??
@@ -606,7 +620,7 @@ export function LiveTradeConsole() {
   }
 
   async function openDispute() {
-    if (!activeOrder || !account || !activeOrder.funding) {
+    if (!activeOrder || !signingAddress || !activeOrder.funding) {
       setError(
         "Fund the escrow and connect the buyer wallet before opening a dispute.",
       );
@@ -626,9 +640,7 @@ export function LiveTradeConsole() {
           tx.object.clock(),
         ],
       });
-      const result = (await dAppKit.signAndExecuteTransaction({
-        transaction: tx,
-      })) as any;
+      const result = (await signAndExecute(tx)) as any;
       if (result.FailedTransaction)
         throw new Error(
           result.FailedTransaction.status?.error?.message ??
@@ -834,7 +846,7 @@ export function LiveTradeConsole() {
   }
 
   async function approveOnChain(side: Role) {
-    if (!activeOrder?.funding || !settlementTarget || !account) {
+    if (!activeOrder?.funding || !settlementTarget || !signingAddress) {
       setError("Connect the wallet for the approving party first.");
       return;
     }
@@ -858,9 +870,7 @@ export function LiveTradeConsole() {
           tx.pure.vector("u8", hash),
         ],
       });
-      const result = (await dAppKit.signAndExecuteTransaction({
-        transaction: tx,
-      })) as any;
+      const result = (await signAndExecute(tx)) as any;
       if (result.FailedTransaction)
         throw new Error(
           result.FailedTransaction.status?.error?.message ??
@@ -884,7 +894,7 @@ export function LiveTradeConsole() {
   }
 
   async function executeSettlement() {
-    if (!activeOrder?.funding || !settlementTarget || !dispute || !account) {
+    if (!activeOrder?.funding || !settlementTarget || !dispute || !signingAddress) {
       setError(
         "Both approvals and a connected wallet are required before settlement execution.",
       );
@@ -902,9 +912,7 @@ export function LiveTradeConsole() {
           tx.object.clock(),
         ],
       });
-      const result = (await dAppKit.signAndExecuteTransaction({
-        transaction: tx,
-      })) as any;
+      const result = (await signAndExecute(tx)) as any;
       if (result.FailedTransaction)
         throw new Error(
           result.FailedTransaction.status?.error?.message ??
