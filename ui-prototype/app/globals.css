@@ -1196,3 +1196,17 @@ body{background:#edf2f7}
 /* Sign-in panel: Google is the single obvious route, the wallet route sits behind a second
    click, and the consent line reads as a left aligned paragraph rather than centred text. */
 .consent-copy{max-width:none;margin-left:0;margin-right:0;font-size:12px;line-height:1.55;text-align:left}
+
+/* Readable display type: retain the ledger-like authority without the
+   compressed, tightly tracked treatment used by the earlier headings. */
+.section-heading h2,
+.roles-intro h2,
+.security-statement h2,
+.closing h2{
+  font-family:var(--font-body);
+  font-weight:650;
+  font-stretch:100%;
+  font-variation-settings:"wght" 650,"wdth" 100,"opsz" 48;
+  line-height:1.08;
+  letter-spacing:.008em;
+}

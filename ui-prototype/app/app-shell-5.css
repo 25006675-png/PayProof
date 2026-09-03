@@ -142,3 +142,15 @@
    same gold as the supplier order card when you are supplying. */
 .register-table .cell-party small{font-size:12px}
 .register-table .cell-party .side-supplying{color:var(--yellow-ink)}
+
+/* Normal-width headings keep Overview, Orders and Wallet open and readable. */
+.shell h1,
+.page-title h1,
+.order-header h1{
+  font-family:var(--font-body);
+  font-weight:700;
+  font-stretch:100%;
+  font-variation-settings:"wght" 700,"wdth" 100,"opsz" 36;
+  line-height:1.16;
+  letter-spacing:.008em;
+}
