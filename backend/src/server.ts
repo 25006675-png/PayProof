@@ -25,7 +25,7 @@ import { EnokiZkLoginIssuer, GoogleOidcTokenVerifier, HttpZkProofProvider, ZkLog
 import { OrganizationService } from "./service/organization-service.js";
 import { MemoryOrganizationStore } from "./store/organization-store.js";
 import { SupabaseOrganizationStore } from "./store/supabase-organization-store.js";
-import { DisabledInvitationEmailSender, ResendInvitationEmailSender, SmtpInvitationEmailSender } from "./integrations/invitation-email.js";
+import { BrevoInvitationEmailSender, DisabledInvitationEmailSender, ResendInvitationEmailSender, SmtpInvitationEmailSender } from "./integrations/invitation-email.js";
 
 const store = config.store === "supabase"
   ? new SupabaseDisputeStore(config.supabaseUrl(), config.supabaseSecretKey())
@@ -94,11 +94,14 @@ const invitationEmail = smtpHost && smtpUser && smtpPassword && invitationFrom
       password: smtpPassword,
       from: invitationFrom,
     })
-  : config.resendApiKey() && invitationFrom
-    ? new ResendInvitationEmailSender(config.resendApiKey()!, invitationFrom)
-    : new DisabledInvitationEmailSender();
+  : config.brevoApiKey() && invitationFrom
+    ? new BrevoInvitationEmailSender(config.brevoApiKey()!, invitationFrom)
+    : config.resendApiKey() && invitationFrom
+      ? new ResendInvitationEmailSender(config.resendApiKey()!, invitationFrom)
+      : new DisabledInvitationEmailSender();
 console.log("Invitation email sender", invitationEmail instanceof SmtpInvitationEmailSender
   ? `SMTP ${smtpHost}:${config.smtpPort()} (${config.smtpSecure() ? "implicit TLS" : "STARTTLS"})`
+  : invitationEmail instanceof BrevoInvitationEmailSender ? "Brevo"
   : invitationEmail instanceof ResendInvitationEmailSender ? "Resend" : "disabled — invitations will report not_configured");
 const settlementVerifier = config.suiEscrowVerifierEnabled
   ? createSuiSettlementVerifier({ packageId: config.suiEscrowPackageId, network: config.suiNetwork, baseUrl: config.suiRpcUrl })

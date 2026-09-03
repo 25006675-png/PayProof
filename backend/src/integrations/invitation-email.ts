@@ -70,6 +70,49 @@ export class ResendInvitationEmailSender implements InvitationEmailSender {
   }
 }
 
+/** Brevo wants the sender split out, not an RFC 5322 "Name <address>" string. */
+function splitAddress(value: string): { name?: string; email: string } {
+  const match = /^\s*(.*?)\s*<([^>]+)>\s*$/.exec(value);
+  return match ? { name: match[1] || undefined, email: match[2]!.trim() } : { email: value.trim() };
+}
+
+/** Brevo verifies a single sender address rather than a whole domain, so it can reach
+ *  any recipient without owning a mail domain. */
+export class BrevoInvitationEmailSender implements InvitationEmailSender {
+  constructor(private readonly apiKey: string, private readonly from: string) {}
+
+  async send(input: InvitationEmailInput): Promise<InvitationDelivery> {
+    const attemptedAt = new Date().toISOString();
+    try {
+      const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+        method: "POST",
+        headers: { "api-key": this.apiKey, "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({
+          sender: splitAddress(this.from),
+          to: [{ email: input.to, name: input.supplierName }],
+          subject: `${input.buyerName} invited you to review ${input.orderReference}`,
+          textContent: `${input.supplierName},\n\n${input.buyerName} invited you to review purchase order ${input.orderReference} in PayProof. Sign in with ${input.to} to review every term before confirming.\n\nReview order: ${input.reviewUrl}\n\nThis invitation expires ${input.expiresAt}. Commercial line items are not included in this email.`,
+          htmlContent: `<p>${escapeHtml(input.supplierName)},</p><p>${escapeHtml(input.buyerName)} invited you to review purchase order <strong>${escapeHtml(input.orderReference)}</strong> in PayProof.</p><p>Sign in with <strong>${escapeHtml(input.to)}</strong> to review every term before confirming.</p><p><a href="${escapeHtml(input.reviewUrl)}">Review purchase order</a></p><p>This invitation expires ${escapeHtml(input.expiresAt)}. Commercial line items are not included in this email.</p>`,
+          headers: { "X-PayProof-Invitation-ID": input.invitationId },
+        }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const payload = await response.json().catch(() => ({})) as { messageId?: string };
+      if (!response.ok || !payload.messageId) {
+        console.error("Invitation email delivery failed", { invitationId: input.invitationId, provider: "brevo", status: response.status });
+        return { status: "failed", attemptedAt };
+      }
+      return { status: "sent", messageId: payload.messageId, attemptedAt };
+    } catch (error) {
+      console.error("Invitation email delivery failed", {
+        invitationId: input.invitationId, provider: "brevo",
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      return { status: "failed", attemptedAt };
+    }
+  }
+}
+
 export type SmtpInvitationEmailConfig = {
   host: string;
   port: number;

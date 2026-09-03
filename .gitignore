@@ -9,3 +9,7 @@ artifacts/
 *.log
 test-results/
 playwright-report/
+.vercel/
+
+.vercel
+.env*

@@ -41,6 +41,7 @@ export const config = {
   suiRpcUrl: process.env.SUI_RPC_URL ?? "https://fullnode.testnet.sui.io:443",
   suiEscrowPackageId: process.env.SUI_ESCROW_PACKAGE_ID ?? "0x4e1f7a3e99809622e2adbc379967eae7d7c26375378558594528810deddd6535",
   resendApiKey: () => optional("RESEND_API_KEY"),
+  brevoApiKey: () => optional("BREVO_API_KEY"),
   invitationEmailFrom: () => optional("INVITATION_EMAIL_FROM"),
   smtpHost: () => optional("SMTP_HOST"),
   smtpPort: () => Number(optional("SMTP_PORT") ?? 465),

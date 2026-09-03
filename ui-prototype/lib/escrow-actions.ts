@@ -100,6 +100,9 @@ export function useEscrowActions() {
       setZkSession(null);
       throw new Error("Your Google sign-in has expired. Sign in again, then retry this step.");
     }
+    // coinWithBalance resolves the payment from the signer's coins, so it needs the sender
+    // before the build. Sponsorship still sets the real sender on the server side.
+    transaction.setSenderIfNotSet(signingAddress);
     const kind = await transaction.build({ client, onlyTransactionKind: true });
     const sponsored = await apiRequest<{ bytes: string; digest: string }>("/v1/sui/sponsor", {
       method: "POST",
