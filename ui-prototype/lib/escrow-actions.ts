@@ -135,7 +135,8 @@ export function useEscrowActions() {
     // Orders created before the arbitrator wallet was recorded fall back to the configured arbitrator.
     const arbitrator = order.arbitratorWalletAddress || DEFAULT_ARBITRATOR_ADDRESS;
     const tx = new Transaction();
-    const paymentCoin = tx.coin({ balance: BigInt(order.amountUnits), type: order.assetType });
+    // Enoki owns the gas coin, so the payment must come from the buyer's own coins.
+    const paymentCoin = tx.coin({ balance: BigInt(order.amountUnits), type: order.assetType, useGasCoin: false });
     tx.moveCall({
       target: `${ESCROW_PACKAGE_ID}::escrow::create`,
       typeArguments: [order.assetType],
