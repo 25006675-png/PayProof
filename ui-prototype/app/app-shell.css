@@ -357,6 +357,7 @@
 .wallet-amount{font-family:var(--font-data);font-size:40px;font-weight:600;letter-spacing:-.02em;line-height:1}
 .wallet-amount-text{font-family:var(--font-body);font-size:22px;font-weight:650;letter-spacing:-.01em}
 .wallet-amount small{font-family:var(--font-body);font-size:13px;font-weight:700;color:#cfe0ff}
+.link-light{color:#fff;text-decoration:underline;text-underline-offset:2px}
 .wallet-address{display:flex;flex-wrap:wrap;align-items:center;gap:8px;color:#cfe0ff;font-size:13px}
 .wallet-address code{color:#fff}
 .wallet-note{color:#cfe0ff;font-size:12.5px}
