@@ -238,6 +238,7 @@ function InviteGate({ error }: { error: string }) {
               await beginGoogleZkLogin(returnTo);
             })().catch((cause) => setActionError(cause instanceof Error ? cause.message : "Google sign-in could not be started."));
           }}>{needsAccountSwitch ? "Switch Google account" : "Continue with Google"}<ArrowRight size={14} aria-hidden="true" /></Button>
+          <Button variant="outline" asChild><a href="/orders/sample-demo-1001"><FastForward size={14} aria-hidden="true" />Open guided demo</a></Button>
           <small className="legal-copy">By continuing you agree to the <a href="/legal/terms">Terms of Service</a> and the <a href="/legal/dispute-policy">Dispute Resolution Policy</a>.</small>
           <a className="gate-back" href="/">Return to ProofPay</a>
         </section>

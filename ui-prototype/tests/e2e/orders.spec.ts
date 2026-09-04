@@ -27,6 +27,9 @@ test("explains when an invitation is opened with the wrong account", async ({ pa
   await expect(page.getByRole("heading", { name: "Switch account to review this order" })).toBeVisible();
   await expect(page.getByText("buyer@example.com", { exact: false })).toBeVisible();
   await expect(page.getByRole("button", { name: "Switch Google account" })).toBeVisible();
+  await page.getByRole("link", { name: "Open guided demo" }).click();
+  await expect(page).toHaveURL(/\/orders\/sample-demo-1001$/);
+  await expect(page.getByText("Buyer-led guided demo")).toBeVisible();
 });
 
 test("creates a purchase order as buyer with an agreement and multiple line items", async ({ page }) => {
