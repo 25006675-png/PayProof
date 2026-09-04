@@ -73,8 +73,9 @@ test.describe.serial("live order lifecycle", () => {
     await page.getByRole("button", { name: "Confirm and accept terms" }).click();
     await expect(page.getByText("The order is confirmed. The buyer funds escrow next.")).toBeVisible();
     await expect(page.getByText(/Confirmed by .*terms version 1\.0/).first()).toBeVisible();
-    const buyerOnlySkip = page.getByRole("button", { name: /Only the buyer can use the demo control/ });
-    await expect(buyerOnlySkip).toBeDisabled();
+    await page.getByRole("button", { name: "Skip to next step" }).click();
+    await expect(page.getByRole("heading", { name: "Waiting for dispatch" })).toBeVisible();
+    await expect(page.getByText(/Every action changes only this sample/)).toBeVisible();
     await page.context().close();
   });
 
@@ -154,6 +155,33 @@ test.describe.serial("live order lifecycle", () => {
 });
 
 test.describe("sample orders", () => {
+  test("guided buyer demo walks through inspection, evidence, negotiation and AI analysis", async ({ page }) => {
+    await page.goto("/orders/sample-demo-1001");
+    await expect(page.getByText("Buyer-led guided demo")).toBeVisible();
+    await expect(page.getByText("Fresh strawberries, 8 x 250 g punnets", { exact: true })).toBeVisible();
+    await expect(page.getByText("Fresh blueberries, 12 x 125 g punnets", { exact: true })).toBeVisible();
+    await expect(page.getByText("Premium Hass avocados, 4 kg", { exact: true })).toBeVisible();
+
+    await page.getByRole("button", { name: "Show confirmed order" }).click();
+    await expect(page.getByRole("heading", { name: "Fund escrow" })).toBeVisible();
+    await page.getByRole("button", { name: "Show funded order" }).click();
+    await expect(page.getByRole("heading", { name: "Waiting for dispatch" })).toBeVisible();
+    await page.getByRole("button", { name: "Show shipment" }).click();
+    await expect(page.getByRole("heading", { name: "Confirm the goods arrived" })).toBeVisible();
+    await page.getByRole("button", { name: "Show delivery inspection" }).click();
+    await expect(page.getByRole("heading", { name: "Check the delivery" })).toBeVisible();
+    await page.getByRole("button", { name: "Open sample claim" }).click();
+    await expect(page.getByText("864 USDC", { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole("link", { name: "receiving-damage.jpg" })).toBeVisible();
+    await page.getByRole("button", { name: "Show supplier response" }).click();
+    await expect(page.getByRole("link", { name: "supplier-dispatch.jpg" })).toBeVisible();
+    await page.getByRole("button", { name: "Run sample AI analysis" }).click();
+    await expect(page.getByText("AI proposal, not binding")).toBeVisible();
+    await page.getByRole("button", { name: "View mediation report" }).click();
+    await page.getByRole("tab", { name: "Mediator" }).click();
+    await expect(page.getByRole("heading", { name: /Findings/ })).toBeVisible();
+  });
+
   test("buyer funds a confirmed sample order through the agreement dialog", async ({ page }) => {
     await page.goto("/orders/sample-po-2478");
     await expect(page.getByRole("heading", { name: "Fund escrow" })).toBeVisible();
@@ -210,7 +238,7 @@ test.describe("sample orders", () => {
     await page.goto("/wallet");
     await page.getByRole("button", { name: /Top up/ }).click();
     const dialog = page.getByRole("dialog");
-    await dialog.getByPlaceholder("5,000.00").fill("500");
+    await dialog.getByPlaceholder("1.00").fill("500");
     await dialog.getByRole("radio", { name: /Debit or credit card/ }).check();
     await dialog.getByRole("button", { name: "Continue" }).click();
     await dialog.getByPlaceholder("4242 4242 4242 4242").fill("4242424242424242");

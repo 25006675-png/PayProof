@@ -1,0 +1,20 @@
+PURCHASE ORDER DEMO-1001
+
+Buyer: Choong Zhuo Lin
+Supplier: FreshSource Foods Sdn. Bhd.
+Deliver to: Receiving Bay 2, Shah Alam Distribution Centre
+Expected delivery: 18 September 2026
+Settlement asset: USDC
+
+1. Fresh strawberries, 8 x 250 g punnets
+   100 cartons at 48.00 USDC each = 4,800.00 USDC
+
+2. Fresh blueberries, 12 x 125 g punnets
+   80 cartons at 36.00 USDC each = 2,880.00 USDC
+
+3. Premium Hass avocados, 4 kg
+   60 crates at 42.00 USDC each = 2,520.00 USDC
+
+ORDER TOTAL: 10,200.00 USDC
+
+Cold-chain delivery required. Buyer inspection window: 24 hours after delivery.

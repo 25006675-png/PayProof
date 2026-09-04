@@ -3,7 +3,7 @@
 import { type ClaimProposal, type ClaimView, type DemoOrder, type DemoOrderLine, type InspectionLine, type MediationReport, type OrderDocument, type OrderShipment, itemSummary } from "@/lib/demo-orders";
 import { STATUS, TERMS, demoNextStatus, type OrderStatus } from "@/lib/order-status";
 
-const VERSION = 5;
+const VERSION = 6;
 const HIDE_KEY = "payproof_samples_hidden";
 
 const line = (id: string, description: string, quantity: number, unitPrice: number, unit: string): DemoOrderLine => ({ id, description, quantity, unitPrice, unit });
@@ -20,9 +20,12 @@ type Seed = {
   daysAgo: number;
   invited?: boolean;
   carrier?: string;
+  guidedDemo?: boolean;
 };
 
 const seeds: Seed[] = [
+  { reference: "DEMO-1001", role: "BUYER", counterparty: "FreshSource Foods Sdn. Bhd.", status: "awaiting_supplier", delivery: "2026-09-18", deliveryLocation: "Receiving Bay 2, Shah Alam Distribution Centre", daysAgo: 0, guidedDemo: true,
+    items: [line("1", "Fresh strawberries, 8 x 250 g punnets", 100, 48, "cartons"), line("2", "Fresh blueberries, 12 x 125 g punnets", 80, 36, "cartons"), line("3", "Premium Hass avocados, 4 kg", 60, 42, "crates")] },
   { reference: "PO-2481", role: "BUYER", counterparty: "FreshSource Foods", status: "awaiting_supplier", delivery: "2026-09-18", deliveryLocation: "Central warehouse, Shah Alam", daysAgo: 0,
     items: [line("1", "Sunflower cooking oil 20L", 36, 280, "drums"), line("2", "Canola cooking oil 20L", 28, 270, "drums")] },
   { reference: "PO-2480", role: "SUPPLIER", counterparty: "Sunrise Mart", status: "awaiting_supplier", invited: true, delivery: "2026-09-15", deliveryLocation: "Sunrise Mart distribution centre, Klang", daysAgo: 1,
@@ -137,6 +140,33 @@ function sampleClaim(order: DemoOrder, status: ClaimView["status"], daysAgo: num
   };
 }
 
+function guidedPurchaseOrder(): OrderDocument {
+  return {
+    id: "guided-purchase-order", kind: "purchase_order", name: "purchase-order-DEMO-1001.txt", size: 579, mimeType: "text/plain",
+    sha256: "f20e3cacb33060359e48f26b20f3f41640e31e9c718548a1650261c5f4a3f700", uploadedAt: daysAgoIso(0, 8), uploadedBy: "BUYER", url: "/demo-evidence/purchase-order.txt",
+    extracted: {
+      reference: "DEMO-1001", supplierName: "FreshSource Foods Sdn. Bhd.", buyerName: "Choong Zhuo Lin", deliveryDate: "2026-09-18", deliveryLocation: "Receiving Bay 2, Shah Alam Distribution Centre", currency: "USDC",
+      lines: [
+        { description: "Fresh strawberries, 8 x 250 g punnets", quantity: 100, unit: "cartons", unitPrice: 48 },
+        { description: "Fresh blueberries, 12 x 125 g punnets", quantity: 80, unit: "cartons", unitPrice: 36 },
+        { description: "Premium Hass avocados, 4 kg", quantity: 60, unit: "crates", unitPrice: 42 },
+      ], warnings: [],
+    },
+  };
+}
+
+function guidedBuyerEvidence(): OrderDocument[] {
+  const uploadedAt = new Date().toISOString();
+  return [
+    { id: "guided-receiving-photo", kind: "claim_evidence", name: "receiving-damage.jpg", size: 2_322_181, mimeType: "image/png", sha256: "42b9a9bcfe2c7d3a761c5023e586efb6a3143214609edee062b15d971843c96e", uploadedAt, uploadedBy: "BUYER", url: "/demo-evidence/receiving-damage.png", transcript: "Receiving photograph shows crushed and damp strawberry cartons at Bay 2 before the pallet was moved." },
+    { id: "guided-delivery-note", kind: "claim_evidence", name: "delivery-note-DEMO-1001.txt", size: 457, mimeType: "text/plain", sha256: "6b9254689063becc4bddcffb69899fb3ada2e7b56e46fa59680eecf2d4573bd1", uploadedAt, uploadedBy: "BUYER", url: "/demo-evidence/delivery-note.txt", transcript: "Delivery note DO-DEMO-1001 records 18 damaged strawberry cartons at handover. Blueberries and avocados were accepted in full." },
+  ];
+}
+
+function guidedSupplierEvidence(): OrderDocument {
+  return { id: "guided-dispatch-photo", kind: "claim_evidence", name: "supplier-dispatch.jpg", size: 2_676_609, mimeType: "image/png", sha256: "55beca644af1a66558a9e8ca7b71b348b71b5d2af30753f214b5fa6534ef5ec8", uploadedAt: new Date().toISOString(), uploadedBy: "SUPPLIER", url: "/demo-evidence/supplier-dispatch.png", transcript: "Supplier dispatch photograph shows the strawberry cartons intact, stacked and stretch-wrapped before collection by the carrier." };
+}
+
 function buildSample(seed: Seed, you: string): DemoOrder {
   const value = seed.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
   const buyer = seed.role === "BUYER" ? you : seed.counterparty;
@@ -170,7 +200,8 @@ function buildSample(seed: Seed, you: string): DemoOrder {
     inviteExpiresAt: seed.status === "awaiting_supplier" || seed.status === "awaiting_buyer" ? daysAgoIso(-6) : undefined,
     version: Math.max(1, step + 1),
     source: "sample",
-    documents: [],
+    guidedDemo: seed.guidedDemo,
+    documents: seed.guidedDemo ? [guidedPurchaseOrder()] : [],
     events,
   };
   if (step >= 1) order.confirmation = { confirmedBy: "sample", confirmedRole: initiatorRole === "buyer" ? "supplier" : "buyer", organizationName: confirmer, orderVersion: 0, termsVersion: TERMS.version, confirmedAt: daysAgoIso(seed.daysAgo, 11) };
@@ -290,7 +321,52 @@ export function deliverSample(order: DemoOrder, by: "BUYER" | "SUPPLIER", refere
   return next;
 }
 
+export function guidedDemoNextLabel(order: DemoOrder): string {
+  if (order.status === "awaiting_supplier" || order.status === "awaiting_buyer") return "Show confirmed order";
+  if (order.status === "supplier_confirmed") return "Show funded order";
+  if (order.status === "funded") return "Show shipment";
+  if (order.status === "in_transit") return "Show delivery inspection";
+  if (order.status === "delivered") return "Open sample claim";
+  if (order.status === "dispute_open") return "Show supplier response";
+  if (order.status === "negotiation_open" && !order.claim?.proposals.some((proposal) => proposal.source === "ai")) return "Run sample AI analysis";
+  if (order.status === "negotiation_open") return "Show agreed settlement";
+  if (order.status === "settlement_pending") return "Show completed settlement";
+  return "Restart guided demo";
+}
+
+function advanceGuidedDemo(order: DemoOrder): DemoOrder | null {
+  if (order.status === "delivered") {
+    const evidence = guidedBuyerEvidence();
+    return recordSampleInspection(
+      { ...order, documents: [...evidence, ...order.documents] },
+      order.items.map((item) => item.id === "1"
+        ? { lineId: item.id, accepted: 82, missing: 0, damaged: 18 }
+        : { lineId: item.id, accepted: item.quantity, missing: 0, damaged: 0 }),
+      "18 strawberry cartons arrived with crushed corners and leaking punnets. The exception was recorded at handover; blueberries and avocados were accepted in full.",
+      evidence.length,
+    );
+  }
+  if (order.status === "dispute_open" && order.claim) {
+    const supplierEvidence = guidedSupplierEvidence();
+    return respondSample(
+      { ...order, documents: [supplierEvidence, ...order.documents] },
+      false,
+      "Our dispatch photo shows the strawberry cartons intact and stretch-wrapped before collection. We dispute full responsibility because the damage appears to have occurred during carriage.",
+      1,
+    );
+  }
+  if (order.status === "negotiation_open" && order.claim) {
+    if (!order.claim.proposals.some((proposal) => proposal.source === "ai")) return mediateSample(order);
+    return agreeSample(agreeSample(order, "buyer"), "supplier");
+  }
+  return null;
+}
+
 export function advanceSample(order: DemoOrder): DemoOrder | null {
+  if (order.guidedDemo) {
+    const guided = advanceGuidedDemo(order);
+    if (guided) return guided;
+  }
   const next = demoNextStatus(order.status);
   if (!next) return null;
   if (next === "supplier_confirmed") return confirmSample(order, order.initiatorRole === "buyer" ? order.supplier : order.buyer);

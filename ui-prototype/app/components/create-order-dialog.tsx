@@ -207,7 +207,7 @@ export function CreateOrderDialog({ open, onOpenChange, onCreate, profile, compa
             <fieldset className="form-section">
               <legend>Line items</legend>
               <div className="line-editor">
-                <div className="line-editor-head" aria-hidden="true"><span>Product</span><span>Quantity</span><span>Unit</span><span>Unit price (SUI)</span><span>Line total</span><span /></div>
+                <div className="line-editor-head" aria-hidden="true"><span>Product</span><span>Quantity</span><span>Unit</span><span>Unit price (USDC)</span><span>Line total</span><span /></div>
                 {items.map((item, index) => (
                   <div className="line-editor-row" key={item.id}>
                     <Input aria-label={`Product ${index + 1}`} placeholder="Product or description" value={item.description} onChange={(event) => updateLine(item.id, "description", event.target.value)} />
@@ -229,7 +229,7 @@ export function CreateOrderDialog({ open, onOpenChange, onCreate, profile, compa
 
             <div className="order-total-strip">
               <span>Order value, settled in Testnet USDC</span>
-              <strong>{money(total)} <small>SUI</small></strong>
+              <strong>{money(total)} <small>USDC</small></strong>
             </div>
 
             <AgreementBlock company={company} accepted={accepted} onChange={setAccepted}

@@ -47,6 +47,8 @@ export type OrderDocument = {
   /** Path in the backend document store. Present when both parties can open the file. */
   storagePath?: string;
   remote?: boolean;
+  /** Public demo asset that can be opened without the private document API. */
+  url?: string;
 };
 
 export type QuotedClause = { clauseId: string; quote: string };
@@ -212,6 +214,8 @@ export type DemoOrder = {
   invited?: boolean;
   version: number;
   source: "sample" | "backend";
+  /** Curated sample whose demo control walks through the complete claim journey. */
+  guidedDemo?: boolean;
   documents: OrderDocument[];
   confirmation?: OrderConfirmation;
   shipment?: OrderShipment;

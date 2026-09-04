@@ -71,6 +71,7 @@ export async function prepareEvidence(order: DemoOrder, file: File, role: "BUYER
 
 export function DocumentLink({ order, document }: { order: DemoOrder; document: OrderDocument }) {
   const [error, setError] = useState("");
+  if (document.url) return <a href={document.url} target="_blank" rel="noreferrer">{document.name}</a>;
   if (!document.remote) return <span className="muted" title="Kept in this browser only">{document.name}</span>;
   return (
     <>
@@ -188,7 +189,8 @@ export function DocumentsPanel({ order, role, company, onOrderChange, busy }: { 
                 <code title="SHA-256 fingerprint">{document.sha256.slice(0, 16)}</code>
               </div>
               <div className="document-actions">
-                {document.remote && <Button variant="outline" size="sm" onClick={() => openOrderDocument(order.id, document.id).catch((cause) => setError(cause instanceof Error ? cause.message : "The document could not be opened."))}>View</Button>}
+                {document.url && <Button variant="outline" size="sm" asChild><a href={document.url} target="_blank" rel="noreferrer">View</a></Button>}
+                {!document.url && document.remote && <Button variant="outline" size="sm" onClick={() => openOrderDocument(order.id, document.id).catch((cause) => setError(cause instanceof Error ? cause.message : "The document could not be opened."))}>View</Button>}
                 {document.extracted && <Button variant="outline" size="sm" onClick={() => setShowing(showing?.id === document.id ? null : document)}><ScanSearch size={14} aria-hidden="true" />{showing?.id === document.id ? "Hide comparison" : "Compare with order"}</Button>}
               </div>
             </li>

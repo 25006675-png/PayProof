@@ -1,0 +1,13 @@
+DELIVERY NOTE DO-DEMO-1001
+
+Carrier: City-Link Cold Chain
+Tracking: CLC-8842-1906-MY
+Delivered: 18 September 2026, 09:42
+Receiving bay: Bay 2, Shah Alam Distribution Centre
+
+Receiving exception:
+18 of 100 strawberry cartons arrived with crushed corners.
+Several punnets were leaking and could not be accepted for resale.
+Blueberry cartons and avocado crates were accepted in full.
+
+Photographs were taken before the pallet was moved from the receiving bay.

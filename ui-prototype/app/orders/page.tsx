@@ -135,7 +135,7 @@ export default function OrdersPage() {
                       {action.owner === "you" && <span className="action-dot" title="Needs your action" aria-hidden="true" />}
                       <a className="row-link" href={`/orders/${encodeURIComponent(order.id)}`}><strong>{order.reference}</strong></a>
                       <small>{order.item}, {order.items.length} {order.items.length === 1 ? "line" : "lines"}</small>
-                      {order.source === "sample" && <SampleTag />}
+                      {order.source === "sample" && <SampleTag label={order.guidedDemo ? "Guided demo" : undefined} />}
                     </td>
                     <td><span className="cell-party"><strong>{order.buyer}</strong>{order.role === "BUYER" && <small className="side-buying">You · Buying</small>}</span></td>
                     <td><span className="cell-party"><strong>{order.supplier}</strong>{order.role === "SUPPLIER" && <small className="side-supplying">You · Supplying</small>}</span></td>

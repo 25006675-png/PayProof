@@ -10,7 +10,7 @@ import { type Anchor, ExtractionComparison, attachFile, buildDocument, extractPu
 import { type DemoOrder, type DocumentKind, type InspectionLine, type OrderDocument, type OrderShipment, claimOwner, formatDate, formatDateTime, formatOrderMoney as money, sha256Hex } from "@/lib/demo-orders";
 import { loadClaim, openDemoClaim } from "@/lib/dispute-actions";
 import { useEscrowActions } from "@/lib/escrow-actions";
-import { acceptLiveInvitation, acceptLiveInvite, cancelLiveInvite, markLiveDelivered, markLiveShipment, recordDemoAcceptance, recordDemoFunding, sendLiveInvite, tradeOrderToView, viewLiveOrder } from "@/lib/live-orders";
+import { acceptLiveInvitation, acceptLiveInvite, cancelLiveInvite, markLiveDelivered, markLiveShipment, sendLiveInvite, tradeOrderToView, viewLiveOrder } from "@/lib/live-orders";
 import { withExtras } from "@/lib/local-order-extras";
 import { STATUS, demoNextStatus, isDisputed, nextAction } from "@/lib/order-status";
 import type { InvitationDelivery } from "@/lib/payproof-api";
@@ -18,9 +18,7 @@ import { advanceSample, confirmSample, deliverSample, recordSampleInspection, sh
 import { explorerTransactionUrl } from "@/lib/sui-dapp-kit";
 import { clearPendingInvite } from "@/lib/pending-invite";
 
-/** Demo controls show unless explicitly disabled. Vercel values are normalized because values
- *  entered through files or shell input can contain trailing whitespace. */
-export const DEMO_CONTROLS = process.env.NEXT_PUBLIC_DEMO_CONTROLS?.trim().toLowerCase() !== "false";
+export const DEMO_CONTROLS = true;
 const CARRIERS = ["DHL Express", "City-Link Express", "GDEX", "J&T Express", "Pos Laju", "Own fleet"];
 
 type Props = {
@@ -562,27 +560,15 @@ function SettlementRecord({ order }: { order: DemoOrder }) {
 }
 
 function DemoControl({ order, live, busy, run }: StepProps) {
+  if (order.guidedDemo) return null;
   const next = demoNextStatus(order.status);
   if (!next) return null;
-  let unavailable = "";
-  if (live) {
-    if (["awaiting_supplier", "awaiting_buyer", "changes_requested"].includes(order.status)) unavailable = "The invited company has to confirm. Sign in as that account to continue.";
-    else if (isDisputed(order.status)) unavailable = "Use the claim section to move a disputed order forward.";
-    else if (order.status === "supplier_confirmed" && order.role !== "BUYER") unavailable = "Only the buyer can use the demo control to fund this order. Sign in as the buyer company.";
-    else if (order.status === "funded" && order.role !== "SUPPLIER") unavailable = "Only the supplier can use the demo control to ship this order. Sign in as the supplier company.";
-    else if (order.status === "delivered" && order.role !== "BUYER") unavailable = "Only the buyer can use the demo control to accept this delivery. Sign in as the buyer company.";
-  }
   const step = async () => run("demo", async () => {
-    if (!live) return advanceSample(order);
-    if (order.status === "supplier_confirmed") return withExtras(await recordDemoFunding(order));
-    if (order.status === "funded") return withExtras(await markLiveShipment(order.id, { carrier: "DHL Express", trackingNumber: `DHL${Date.now().toString().slice(-8)}MY`, dispatchedAt: new Date().toISOString(), expectedAt: order.delivery }));
-    if (order.status === "in_transit") return withExtras(await markLiveDelivered(order.id, {}));
-    if (order.status === "delivered") return withExtras(await recordDemoAcceptance(order, { lines: order.items.map((item) => ({ lineId: item.id, accepted: item.quantity, missing: 0, damaged: 0 })) }));
-    return null;
+    return advanceSample(live ? { ...order, source: "sample" } : order);
   }, `Moved to ${STATUS[next].label}.`);
-  const hint = unavailable || `Demo control: skip to "${STATUS[next].label}" without the usual evidence.${live ? " The backend records the step as a real state change." : " Only this sample changes."}`;
+  const hint = `Demo control: show "${STATUS[next].label}" immediately without changing the backend or Sui.`;
   return (
-    <button type="button" className="demo-skip" aria-label={unavailable || "Skip to next step"} title={hint} disabled={Boolean(unavailable) || Boolean(busy)} onClick={() => void step()}>
+    <button type="button" className="demo-skip" aria-label="Skip to next step" title={hint} disabled={Boolean(busy)} onClick={() => void step()}>
       <FastForward size={13} aria-hidden="true" />{busy === "demo" ? "Moving" : `Skip to ${STATUS[next].label}`}
     </button>
   );

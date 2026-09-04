@@ -129,7 +129,7 @@ export function LiveTradeConsole() {
     supplierEmail: "supplier@freshsource.demo",
     supplierName: "FreshSource Foods Sdn. Bhd.",
     amount: "30000",
-    asset: "SUI",
+    asset: "USDC",
     description: "Premium cooking oils, 100 cartons",
     deliveryDate: "08 Sep 2026",
     deliveryLocation: "GreenBite Receiving Bay · PJ",
@@ -1070,17 +1070,8 @@ export function LiveTradeConsole() {
                     </label>
                     <label>
                       <span>Settlement asset</span>
-                      <select
-                        value={orderForm.asset}
-                        onChange={(event) =>
-                          setOrderForm({
-                            ...orderForm,
-                            asset: event.target.value,
-                          })
-                        }
-                      >
+                      <select value={orderForm.asset} disabled>
                         <option value="USDC">Testnet USDC</option>
-                        <option value="SUI">SUI</option>
                       </select>
                     </label>
                     <label className="live-field-wide">

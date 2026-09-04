@@ -66,5 +66,6 @@
 .proposal-report-toggle{width:max-content}
 .evidence-files{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:6px}
 .evidence-files li{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--rule);border-radius:6px;background:#fff;font-size:12px}
-.evidence-files button{border:0;background:transparent;color:var(--blue);font-weight:600;cursor:pointer;padding:0}
+.evidence-files button,.evidence-files a{border:0;background:transparent;color:var(--blue);font-weight:600;cursor:pointer;padding:0;text-decoration:none}
+.evidence-files a:hover{text-decoration:underline}
 @media(max-width:1050px){.claim-side-panel{position:static}}

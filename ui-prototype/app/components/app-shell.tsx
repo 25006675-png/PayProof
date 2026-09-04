@@ -43,8 +43,8 @@ export function RoleTag({ role, compact = false, label }: { role: "BUYER" | "SUP
   );
 }
 
-export function SampleTag() {
-  return <span className="sample-tag" title="Sample order. Actions only change this sample, nothing is sent to the backend or Sui.">Sample</span>;
+export function SampleTag({ label = "Sample" }: { label?: string }) {
+  return <span className="sample-tag" title="Sample order. Actions only change this sample, nothing is sent to the backend or Sui.">{label}</span>;
 }
 
 export function Notice({ tone = "info", children, onDismiss }: { tone?: "info" | "success" | "error"; children: ReactNode; onDismiss?: () => void }) {

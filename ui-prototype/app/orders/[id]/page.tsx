@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { ArrowLeft, ArrowRight, FileText, LockKeyhole, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ArrowRight, FastForward, FileText, LockKeyhole, RotateCcw, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppShell, HelpHint, Logo, Notice, RoleTag, SampleTag, Skeleton, StatusPill } from "@/app/components/app-shell";
 import { ClaimSection } from "@/app/components/claim-section";
@@ -18,6 +18,7 @@ import { STATUS, isDisputed } from "@/lib/order-status";
 import { clearSession, loadSession, signOutSession } from "@/lib/payproof-api";
 import { savePendingInvite } from "@/lib/pending-invite";
 import { beginGoogleZkLogin } from "@/lib/auth";
+import { advanceSample, guidedDemoNextLabel } from "@/lib/sample-orders";
 import { useWorkspace } from "@/lib/use-workspace";
 
 export default function OrderPage() {
@@ -114,7 +115,7 @@ export default function OrderPage() {
       <LiftCard as="header" className={`order-header order-header-${roleKey} reveal`} tilt={1.5} lift={2}>
         <div className="order-header-top">
           <div>
-            <div className="order-head-tags"><StatusPill status={order.status} /><RoleTag role={order.role} compact />{order.source === "sample" && <SampleTag />}</div>
+            <div className="order-head-tags"><StatusPill status={order.status} /><RoleTag role={order.role} compact />{order.source === "sample" && <SampleTag label={order.guidedDemo ? "Guided demo" : undefined} />}</div>
             <h1>{order.reference}</h1>
             <p>{order.item}. {money(quantity)} units across {order.items.length} {order.items.length === 1 ? "line" : "lines"}. {meta.summary}</p>
           </div>
@@ -130,6 +131,19 @@ export default function OrderPage() {
       </LiftCard>
       {order.source === "sample" && <Notice tone="info">This is a sample order for demonstration. Every action changes only this sample. Nothing is sent to the backend or to Sui.</Notice>}
       {claimError && <Notice tone="error">{claimError}</Notice>}
+      {order.guidedDemo && (
+        <section className="guided-demo-bar" aria-label="Guided demo controls">
+          <div><strong>Buyer-led guided demo</strong><span>Use the normal action, or jump ahead with realistic prefilled data and evidence.</span></div>
+          <Button variant="outline" onClick={() => {
+            if (order.status === "settled") { workspace.resetSamples(); return; }
+            const next = advanceSample(order);
+            if (next) change(next);
+          }}>
+            {order.status === "settled" ? <RotateCcw size={14} aria-hidden="true" /> : <FastForward size={14} aria-hidden="true" />}
+            {guidedDemoNextLabel(order)}
+          </Button>
+        </section>
+      )}
       {/* The stepper and the working columns share one block container so the bar can stick while they scroll. */}
       <div className="order-body">
         <div className="stepper-bar reveal reveal-1"><OrderStepper status={order.status} /></div>
