@@ -88,11 +88,13 @@ export default function WalletPage() {
     return Math.max(0, after - before);
   };
 
+  // A signed-in wallet only reflects real orders. Sample orders stay on the orders page.
+  const ledgerOrders = workspace.live ? workspace.liveOrders : workspace.orders;
   const position = useMemo(() => {
-    const funded = (role: "BUYER" | "SUPPLIER") => workspace.orders.filter((order) => order.role === role && ["funded", "in_transit", "delivered", "dispute_open", "negotiation_open", "arbitration_pending", "settlement_pending"].includes(order.status));
+    const funded = (role: "BUYER" | "SUPPLIER") => ledgerOrders.filter((order) => order.role === role && ["funded", "in_transit", "delivered", "dispute_open", "negotiation_open", "arbitration_pending", "settlement_pending"].includes(order.status));
     const buying = funded("BUYER");
     const supplying = funded("SUPPLIER");
-    const held = workspace.orders.filter((order) => order.inspection && order.inspection.heldValue > 0 && !["settled", "cancelled"].includes(order.status));
+    const held = ledgerOrders.filter((order) => order.inspection && order.inspection.heldValue > 0 && !["settled", "cancelled"].includes(order.status));
     const pendingIn = movements.filter((item) => item.state === "pending" && item.type === "in").reduce((sum, item) => sum + item.amount, 0);
     const pendingOut = movements.filter((item) => item.state === "pending" && item.type === "out").reduce((sum, item) => sum + item.amount, 0);
     return {
@@ -101,7 +103,7 @@ export default function WalletPage() {
       held: { value: sumByCurrency(held, (order) => order.inspection?.heldValue ?? 0), count: held.length },
       pendingIn, pendingOut,
     };
-  }, [workspace.orders, movements]);
+  }, [ledgerOrders, movements]);
 
   const record = (movement: Movement) => {
     const next = [movement, ...movements];
@@ -127,7 +129,7 @@ export default function WalletPage() {
           <div className="wallet-actions">
             <button type="button" onClick={() => setTopUpOpen(true)}><span><Plus size={17} aria-hidden="true" /></span><strong>Top up</strong><small>Card, bank or crypto</small></button>
             <button type="button" onClick={() => setWithdrawOpen(true)}><span><ArrowUpRight size={17} aria-hidden="true" /></span><strong>Withdraw</strong><small>To bank or Sui address</small></button>
-            <button type="button" onClick={() => setQrOpen(true)}><span><QrCode size={17} aria-hidden="true" /></span><strong>Payment QR</strong><small>Collect or pay</small></button>
+            <button type="button" onClick={() => setQrOpen(true)}><span><QrCode size={17} aria-hidden="true" /></span><strong>Scan and pay</strong><small>Or show your code</small></button>
           </div>
         </LiftCard>
 
@@ -345,7 +347,6 @@ function QrScanner({ onResult, onError }: { onResult: (text: string) => void; on
 
 function PaymentQrDialog({ open, onOpenChange, company, address, onPaid }: { open: boolean; onOpenChange: (open: boolean) => void; company: string; address: string; onPaid: (movement: Movement) => void }) {
   const escrow = useEscrowActions();
-  const [mode, setMode] = useState<"receive" | "pay">("receive");
   // Receive
   const [amount, setAmount] = useState("320.00");
   const [currency, setCurrency] = useState<"USDC" | "SUI">("USDC");
@@ -355,17 +356,18 @@ function PaymentQrDialog({ open, onOpenChange, company, address, onPaid }: { ope
   // Pay
   const [scanning, setScanning] = useState(false);
   const [pasted, setPasted] = useState("");
+  const [pasteOpen, setPasteOpen] = useState(false);
   const [request, setRequest] = useState<PaymentRequest | null>(null);
   const [payError, setPayError] = useState("");
   const [paying, setPaying] = useState(false);
   const [paid, setPaid] = useState<{ digest: string; receiptObjectId?: string } | null>(null);
 
   useEffect(() => {
-    if (!open || mode !== "receive") return;
+    if (!open) return;
     setSeconds(30);
     const timer = window.setInterval(() => setSeconds((current) => { if (current <= 1) { setSessionId((id) => id + 1); return 30; } return current - 1; }), 1000);
     return () => window.clearInterval(timer);
-  }, [open, mode]);
+  }, [open]);
 
   const payload = useMemo(() => JSON.stringify({
     v: 1, network: "sui:testnet", to: address || "unknown", merchant: company, amount: amount || "0.00", currency, coinType: COINS[currency].type,
@@ -373,7 +375,7 @@ function PaymentQrDialog({ open, onOpenChange, company, address, onPaid }: { ope
   } satisfies PaymentRequest), [address, company, amount, currency, reference, sessionId]);
 
   const close = (next: boolean) => {
-    if (!next) { setScanning(false); setPasted(""); setRequest(null); setPayError(""); setPaid(null); }
+    if (!next) { setScanning(false); setPasted(""); setPasteOpen(false); setRequest(null); setPayError(""); setPaid(null); }
     onOpenChange(next);
   };
 
@@ -381,7 +383,7 @@ function PaymentQrDialog({ open, onOpenChange, company, address, onPaid }: { ope
     setScanning(false);
     try { setRequest(parsePaymentRequest(text)); setPayError(""); } catch (cause) { setRequest(null); setPayError(cause instanceof Error ? cause.message : "That is not a payment request."); }
   }, []);
-  const scanError = useCallback((message: string) => { setScanning(false); setPayError(message); }, []);
+  const scanError = useCallback((message: string) => { setScanning(false); setPasteOpen(true); setPayError(message); }, []);
 
   const pay = async () => {
     if (!request) return;
@@ -402,46 +404,20 @@ function PaymentQrDialog({ open, onOpenChange, company, address, onPaid }: { ope
     <Dialog open={open} onOpenChange={close}>
       <DialogContent className="money-dialog qr-dialog">
         <DialogHeader>
-          <DialogTitle>Payment QR</DialogTitle>
-          <DialogDescription>{mode === "receive"
-            ? `A customer scans this code to pay ${company}. The amount and recipient are fixed in the request, and the code renews every 30 seconds so it cannot be reused.`
-            : "Scan or paste a merchant's payment request. One sponsored transaction pays them and leaves a receipt on Sui bound to that exact request."}</DialogDescription>
+          <DialogTitle>Scan and pay</DialogTitle>
+          <DialogDescription>Scan a merchant&apos;s code to pay them with one sponsored transaction and keep a receipt on Sui, or show your own code so a customer can pay {company}.</DialogDescription>
         </DialogHeader>
-        <div className="segmented" role="radiogroup" aria-label="Receive or pay">
-          <button type="button" className={mode === "receive" ? "segment segment-active" : "segment"} onClick={() => setMode("receive")}><ArrowDownLeft size={14} aria-hidden="true" />Receive</button>
-          <button type="button" className={mode === "pay" ? "segment segment-active" : "segment"} onClick={() => setMode("pay")}><ArrowUpRight size={14} aria-hidden="true" />Pay</button>
-        </div>
-
-        {mode === "receive" ? (
-          <div className="qr-grid">
-            <div>
-              <label className="field"><span>Amount</span><div className="amount-input"><Input type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} /><b>{currency}</b></div></label>
-              <label className="field"><span>Currency</span><select className="select" value={currency} onChange={(event) => setCurrency(event.target.value as "USDC" | "SUI")}><option value="USDC">Testnet USDC</option><option value="SUI">Testnet SUI</option></select></label>
-              <label className="field"><span>Reference</span><Input value={reference} onChange={(event) => setReference(event.target.value)} maxLength={128} /></label>
-              <p className="form-note">Payments land in your available balance, not in any purchase order escrow. The payer keeps a receipt whose hash matches this request.</p>
-            </div>
-            <div className="qr-ticket">
-              {address ? <QRCodeSVG value={payload} size={176} bgColor="#ffffff" fgColor="#0d1d30" level="M" marginSize={1} /> : <span>Sign in to show your payment code</span>}
-              <span className="qr-live"><i aria-hidden="true" />Renews in {seconds}s</span>
-              <strong>{money(Number(amount || 0))} <small>{currency}</small></strong>
-              <small>{company}, session PP-{sessionId}</small>
-              {address && <button type="button" className="text-button" onClick={() => void navigator.clipboard.writeText(payload)}><ClipboardCopy size={12} aria-hidden="true" />Copy request text</button>}
-            </div>
-          </div>
-        ) : paid ? (
-          <>
-            <span className="order-created-mark"><Check size={22} aria-hidden="true" /></span>
-            <DialogHeader><DialogTitle>Paid</DialogTitle><DialogDescription>{money(Number(request?.amount ?? 0))} {request?.currency} went to {request?.merchant || "the merchant"}. Your receipt object is owned by your address and can be verified against the request hash.</DialogDescription></DialogHeader>
-            <p className="form-note"><a className="link" href={explorerTransactionUrl(paid.digest)} target="_blank" rel="noreferrer">View the payment on Suiscan<ExternalLink size={12} aria-hidden="true" /></a>{paid.receiptObjectId && <> Receipt object <code>{paid.receiptObjectId.slice(0, 10)}...{paid.receiptObjectId.slice(-6)}</code></>}</p>
-            <DialogFooter><Button className="btn-primary" onClick={() => close(false)}>Done</Button></DialogFooter>
-          </>
-        ) : (
-          <div className="qr-pay">
-            {scanning ? (
-              <>
-                <QrScanner onResult={read} onError={scanError} />
-                <Button variant="outline" type="button" onClick={() => setScanning(false)}>Stop scanning</Button>
-              </>
+        <div className="qr-split">
+          <section className="qr-pane" aria-labelledby="qr-scan-title">
+            <h3 id="qr-scan-title"><Camera size={15} aria-hidden="true" />Scan to pay</h3>
+            {paid ? (
+              <div className="qr-paid">
+                <span className="order-created-mark"><Check size={22} aria-hidden="true" /></span>
+                <strong>Paid</strong>
+                <p>{money(Number(request?.amount ?? 0))} {request?.currency} went to {request?.merchant || "the merchant"}. Your receipt object is owned by your address and can be verified against the request hash.</p>
+                <p className="form-note"><a className="link" href={explorerTransactionUrl(paid.digest)} target="_blank" rel="noreferrer">View the payment on Suiscan<ExternalLink size={12} aria-hidden="true" /></a>{paid.receiptObjectId && <> Receipt <code>{paid.receiptObjectId.slice(0, 10)}...{paid.receiptObjectId.slice(-6)}</code></>}</p>
+                <Button variant="outline" type="button" onClick={() => { setPaid(null); setRequest(null); setPasted(""); }}>Pay someone else</Button>
+              </div>
             ) : request ? (
               <>
                 <dl className="fact-list">
@@ -452,18 +428,45 @@ function PaymentQrDialog({ open, onOpenChange, company, address, onPaid }: { ope
                 </dl>
                 <p className="form-note">This is a direct payment, not an escrow. It cannot be reversed once signed.</p>
                 {payError && <p className="form-error" role="alert">{payError}</p>}
-                <DialogFooter><Button variant="outline" type="button" onClick={() => { setRequest(null); setPasted(""); }}>Back</Button><Button className="btn-primary" type="button" disabled={paying || !escrow.signingAddress} onClick={() => void pay()}>{paying ? "Paying" : `Pay ${money(Number(request.amount))} ${request.currency}`}</Button></DialogFooter>
+                <div className="action-buttons"><Button variant="outline" type="button" onClick={() => { setRequest(null); setPasted(""); }}>Back</Button><Button className="btn-primary" type="button" disabled={paying || !escrow.signingAddress} onClick={() => void pay()}>{paying ? "Paying" : `Pay ${money(Number(request.amount))} ${request.currency}`}</Button></div>
+              </>
+            ) : scanning ? (
+              <>
+                <QrScanner onResult={read} onError={scanError} />
+                <Button variant="outline" type="button" onClick={() => setScanning(false)}>Stop camera</Button>
               </>
             ) : (
               <>
-                <div className="action-buttons"><Button className="btn-primary" type="button" onClick={() => { setPayError(""); setScanning(true); }}><Camera size={14} aria-hidden="true" />Scan a QR code</Button></div>
-                <label className="field"><span>Or paste the payment request</span><textarea value={pasted} onChange={(event) => setPasted(event.target.value)} rows={4} placeholder='{"v":1,"network":"sui:testnet","to":"0x...","amount":"320.00",...}' /></label>
+                <button type="button" className="qr-scan-launch" onClick={() => { setPayError(""); setScanning(true); }}><Camera size={28} aria-hidden="true" /><strong>Open camera</strong><small>Point at a PayProof payment code</small></button>
                 {payError && <p className="form-error" role="alert">{payError}</p>}
-                <DialogFooter><Button variant="outline" type="button" onClick={() => close(false)}>Cancel</Button><Button className="btn-primary" type="button" disabled={!pasted.trim()} onClick={() => read(pasted)}>Review payment<ArrowRight size={14} aria-hidden="true" /></Button></DialogFooter>
+                {pasteOpen ? (
+                  <>
+                    <label className="field"><span>Paste the request text</span><textarea value={pasted} onChange={(event) => setPasted(event.target.value)} rows={3} placeholder='{"v":1,"network":"sui:testnet","to":"0x...","amount":"320.00",...}' /></label>
+                    <Button className="btn-primary" type="button" disabled={!pasted.trim()} onClick={() => read(pasted)}>Review payment<ArrowRight size={14} aria-hidden="true" /></Button>
+                  </>
+                ) : (
+                  <button type="button" className="text-button" onClick={() => setPasteOpen(true)}>No camera here? Paste the request text instead</button>
+                )}
               </>
             )}
-          </div>
-        )}
+          </section>
+          <section className="qr-pane" aria-labelledby="qr-mine-title">
+            <h3 id="qr-mine-title"><QrCode size={15} aria-hidden="true" />My code</h3>
+            <div className="qr-ticket">
+              {address ? <QRCodeSVG value={payload} size={168} bgColor="#ffffff" fgColor="#0d1d30" level="M" marginSize={1} /> : <span>Sign in to show your payment code</span>}
+              <span className="qr-live"><i aria-hidden="true" />Renews in {seconds}s</span>
+              <strong>{money(Number(amount || 0))} <small>{currency}</small></strong>
+              <small>{company}, session PP-{sessionId}</small>
+              {address && <button type="button" className="text-button" onClick={() => void navigator.clipboard.writeText(payload)}><ClipboardCopy size={12} aria-hidden="true" />Copy request text</button>}
+            </div>
+            <div className="form-grid">
+              <label className="field"><span>Amount</span><div className="amount-input"><Input type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} /><b>{currency}</b></div></label>
+              <label className="field"><span>Currency</span><select className="select" value={currency} onChange={(event) => setCurrency(event.target.value as "USDC" | "SUI")}><option value="USDC">Testnet USDC</option><option value="SUI">Testnet SUI</option></select></label>
+              <label className="field field-wide"><span>Reference</span><Input value={reference} onChange={(event) => setReference(event.target.value)} maxLength={128} /></label>
+            </div>
+            <p className="form-note">Payments land in your available balance, not in any purchase order escrow. The payer keeps a receipt whose hash matches this request.</p>
+          </section>
+        </div>
       </DialogContent>
     </Dialog>
   );
