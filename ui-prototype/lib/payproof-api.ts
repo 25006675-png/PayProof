@@ -133,6 +133,13 @@ export type WorkspaceProfile = {
   organizations: OrganizationMembership[];
 };
 
+export async function updateWorkspaceName(name: string): Promise<WorkspaceProfile> {
+  return apiRequest<WorkspaceProfile>("/v1/workspace", {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+}
+
 export type Dispute = {
   id: string;
   orderId: string;

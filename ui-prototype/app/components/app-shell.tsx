@@ -1,12 +1,13 @@
 "use client";
 
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
-import { AlertCircle, Box, Building2, Check, CheckCircle2, ChevronDown, CircleHelp, Info, LogOut, Upload, X } from "lucide-react";
+import { AlertCircle, Box, Building2, Check, CheckCircle2, ChevronDown, CircleHelp, Info, LogOut, Pencil, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { STATUS, TERMS, statusLabel, statusTone } from "@/lib/order-status";
 import { MotionShell } from "@/app/components/motion";
-import { clearSession, loadSession, signOutSession } from "@/lib/payproof-api";
+import { clearSession, loadSession, signOutSession, updateWorkspaceName } from "@/lib/payproof-api";
 import { clearZkLoginSession } from "@/lib/auth";
 
 export function Logo() {
@@ -88,6 +89,10 @@ export function EmptyArt({ kind }: { kind: "inbox" | "documents" | "activity" })
 
 function UserMenu({ company, email }: { company: string; email?: string }) {
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(company);
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState("");
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -102,25 +107,70 @@ function UserMenu({ company, email }: { company: string; email?: string }) {
     clearZkLoginSession();
     window.location.href = "/";
   };
+  const beginEdit = () => {
+    setDraft(company);
+    setEditError("");
+    setOpen(false);
+    setEditing(true);
+  };
+  const saveCompanyName = async () => {
+    const name = draft.trim();
+    if (name.length < 2 || name.length > 160) {
+      setEditError("Enter a company name between 2 and 160 characters.");
+      return;
+    }
+    setSaving(true);
+    setEditError("");
+    try {
+      await updateWorkspaceName(name);
+      window.location.reload();
+    } catch (cause) {
+      setEditError(cause instanceof Error ? cause.message : "The company name could not be saved.");
+      setSaving(false);
+    }
+  };
   const initials = company.split(/\s+/).map((part) => part[0]).join("").slice(0, 2).toUpperCase() || "PP";
   return (
-    <div className="user-menu" ref={ref}>
-      <button type="button" className="user-menu-button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
-        <span className="user-menu-avatar" aria-hidden="true">{initials}</span>
-        <span className="user-menu-text"><strong>{company}</strong><small>{email ?? "Not signed in"}</small></span>
-        <ChevronDown size={14} aria-hidden="true" />
-      </button>
-      {open && (
-        <div className="user-menu-panel" role="menu">
-          <div className="user-menu-head"><strong>{company}</strong><small>{email ?? "Browsing without an account"}</small></div>
-          <a role="menuitem" href="/legal/terms">Terms of Service</a>
-          <a role="menuitem" href="/legal/dispute-policy">Dispute Resolution Policy</a>
-          {email
-            ? <button type="button" role="menuitem" onClick={() => void signOut()}><LogOut size={14} aria-hidden="true" />Sign out</button>
-            : <a role="menuitem" href="/#access">Sign in</a>}
-        </div>
-      )}
-    </div>
+    <>
+      <div className="user-menu" ref={ref}>
+        <button type="button" className="user-menu-button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+          <span className="user-menu-avatar" aria-hidden="true">{initials}</span>
+          <span className="user-menu-text"><strong>{company}</strong><small>{email ?? "Not signed in"}</small></span>
+          <ChevronDown size={14} aria-hidden="true" />
+        </button>
+        {open && (
+          <div className="user-menu-panel" role="menu">
+            <div className="user-menu-head"><strong>{company}</strong><small>{email ?? "Browsing without an account"}</small></div>
+            {email && <button type="button" role="menuitem" onClick={beginEdit}><Pencil size={14} aria-hidden="true" />Edit company name</button>}
+            <a role="menuitem" href="/legal/terms">Terms of Service</a>
+            <a role="menuitem" href="/legal/dispute-policy">Dispute Resolution Policy</a>
+            {email
+              ? <button type="button" role="menuitem" onClick={() => void signOut()}><LogOut size={14} aria-hidden="true" />Sign out</button>
+              : <a role="menuitem" href="/#access">Sign in</a>}
+          </div>
+        )}
+      </div>
+      <Dialog open={editing} onOpenChange={(value) => { if (!saving) setEditing(value); }}>
+        <DialogContent className="consent-dialog">
+          <form className="company-name-form" onSubmit={(event) => { event.preventDefault(); void saveCompanyName(); }}>
+            <DialogHeader>
+              <DialogTitle>Edit company name</DialogTitle>
+              <DialogDescription>This name appears in your workspace and on new purchase orders and invitations. Existing order records keep the name originally agreed by both parties.</DialogDescription>
+            </DialogHeader>
+            <label className="field field-wide">
+              <span>Company name</span>
+              <Input autoFocus value={draft} onChange={(event) => setDraft(event.target.value)} minLength={2} maxLength={160} autoComplete="organization" disabled={saving} />
+              <small>{draft.trim().length}/160 characters</small>
+            </label>
+            {editError && <p className="form-error" role="alert">{editError}</p>}
+            <DialogFooter>
+              <Button variant="outline" type="button" disabled={saving} onClick={() => setEditing(false)}>Cancel</Button>
+              <Button className="btn-primary" type="submit" disabled={saving || draft.trim() === company || draft.trim().length < 2}>{saving ? "Saving…" : "Save company name"}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
 

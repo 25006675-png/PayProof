@@ -107,7 +107,7 @@ export function createApp(
   app.use("*", cors({
     origin: process.env.FRONTEND_ORIGIN ?? "*",
     allowHeaders: ["Authorization", "Content-Type"],
-    allowMethods: ["GET", "POST", "OPTIONS"],
+    allowMethods: ["GET", "POST", "PATCH", "OPTIONS"],
   }));
   app.onError((error, c) => {
     if (error instanceof DomainError) return c.json({ error: error.code, message: error.message }, error.status as any);
@@ -165,6 +165,10 @@ export function createApp(
   }
   if (organizations) {
     app.get("/v1/workspace", async (c) => c.json(await organizations.workspace(c.get("actor"))));
+    app.patch("/v1/workspace", async (c) => {
+      const body = z.object({ name: z.string().min(2).max(160) }).parse(await c.req.json());
+      return c.json(await organizations.renamePrimary(c.get("actor"), body.name));
+    });
     app.post("/v1/organizations", async (c) => {
       const body = z.object({ name: z.string().min(2).max(160) }).parse(await c.req.json());
       return c.json(await organizations.create(c.get("actor"), body.name), 201);

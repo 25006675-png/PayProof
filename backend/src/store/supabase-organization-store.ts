@@ -46,4 +46,18 @@ export class SupabaseOrganizationStore implements OrganizationStore {
     if (!created) throw new Error("ORGANIZATION_MEMBERSHIP_NOT_FOUND");
     return created;
   }
+
+  async rename(accountId: string, organizationId: string, name: string): Promise<OrganizationMembership> {
+    const { data, error } = await this.client.from("payproof_organizations")
+      .update({ name: name.trim(), updated_at: new Date().toISOString() })
+      .eq("id", organizationId)
+      .select("id")
+      .maybeSingle();
+    if (error) throw new Error(`Supabase organization rename failed: ${error.message}`);
+    if (!data) throw new Error("ORGANIZATION_NOT_FOUND");
+    const memberships = await this.listForAccount(accountId);
+    const updated = memberships.find((item) => item.organizationId === organizationId);
+    if (!updated) throw new Error("ORGANIZATION_MEMBERSHIP_NOT_FOUND");
+    return updated;
+  }
 }
