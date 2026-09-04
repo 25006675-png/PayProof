@@ -73,6 +73,8 @@ test.describe.serial("live order lifecycle", () => {
     await page.getByRole("button", { name: "Confirm and accept terms" }).click();
     await expect(page.getByText("The order is confirmed. The buyer funds escrow next.")).toBeVisible();
     await expect(page.getByText(/Confirmed by .*terms version 1\.0/).first()).toBeVisible();
+    const buyerOnlySkip = page.getByRole("button", { name: /Only the buyer can use the demo control/ });
+    await expect(buyerOnlySkip).toBeDisabled();
     await page.context().close();
   });
 

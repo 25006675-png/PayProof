@@ -568,6 +568,9 @@ function DemoControl({ order, live, busy, run }: StepProps) {
   if (live) {
     if (["awaiting_supplier", "awaiting_buyer", "changes_requested"].includes(order.status)) unavailable = "The invited company has to confirm. Sign in as that account to continue.";
     else if (isDisputed(order.status)) unavailable = "Use the claim section to move a disputed order forward.";
+    else if (order.status === "supplier_confirmed" && order.role !== "BUYER") unavailable = "Only the buyer can use the demo control to fund this order. Sign in as the buyer company.";
+    else if (order.status === "funded" && order.role !== "SUPPLIER") unavailable = "Only the supplier can use the demo control to ship this order. Sign in as the supplier company.";
+    else if (order.status === "delivered" && order.role !== "BUYER") unavailable = "Only the buyer can use the demo control to accept this delivery. Sign in as the buyer company.";
   }
   const step = async () => run("demo", async () => {
     if (!live) return advanceSample(order);
@@ -579,7 +582,7 @@ function DemoControl({ order, live, busy, run }: StepProps) {
   }, `Moved to ${STATUS[next].label}.`);
   const hint = unavailable || `Demo control: skip to "${STATUS[next].label}" without the usual evidence.${live ? " The backend records the step as a real state change." : " Only this sample changes."}`;
   return (
-    <button type="button" className="demo-skip" aria-label="Skip to next step" title={hint} disabled={Boolean(unavailable) || Boolean(busy)} onClick={() => void step()}>
+    <button type="button" className="demo-skip" aria-label={unavailable || "Skip to next step"} title={hint} disabled={Boolean(unavailable) || Boolean(busy)} onClick={() => void step()}>
       <FastForward size={13} aria-hidden="true" />{busy === "demo" ? "Moving" : `Skip to ${STATUS[next].label}`}
     </button>
   );
