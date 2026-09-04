@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { ArrowLeft, ArrowRight, FastForward, FileText, LockKeyhole, RotateCcw, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Copy, ExternalLink, FastForward, FileText, LockKeyhole, RotateCcw, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppShell, HelpHint, Logo, Notice, RoleTag, SampleTag, Skeleton, StatusPill } from "@/app/components/app-shell";
 import { ClaimSection } from "@/app/components/claim-section";
@@ -19,6 +19,7 @@ import { clearSession, loadSession, signOutSession } from "@/lib/payproof-api";
 import { savePendingInvite } from "@/lib/pending-invite";
 import { beginGoogleZkLogin } from "@/lib/auth";
 import { advanceSample, guidedDemoNextLabel } from "@/lib/sample-orders";
+import { explorerObjectUrl } from "@/lib/sui-dapp-kit";
 import { useWorkspace } from "@/lib/use-workspace";
 
 export default function OrderPage() {
@@ -31,6 +32,7 @@ export default function OrderPage() {
   const [loadError, setLoadError] = useState("");
   const [inviteAuthRequired, setInviteAuthRequired] = useState(false);
   const [claimError, setClaimError] = useState("");
+  const [escrowCopied, setEscrowCopied] = useState(false);
   const isSample = id.startsWith("sample-");
 
   useEffect(() => {
@@ -108,6 +110,12 @@ export default function OrderPage() {
   const escrowState = order.funding
     ? order.funding.verificationStatus === "verified_on_chain" ? "Verified on Sui" : "Recorded from a Sui reference"
     : order.source === "sample" && meta.step >= 2 ? "Secured (sample)" : "Not funded yet";
+  const copyEscrowObject = async () => {
+    if (!order.funding) return;
+    await navigator.clipboard.writeText(order.funding.escrowObjectId);
+    setEscrowCopied(true);
+    window.setTimeout(() => setEscrowCopied(false), 2000);
+  };
 
   return (
     <AppShell active="orders" company={workspace.company}>
@@ -126,7 +134,7 @@ export default function OrderPage() {
           <div><dt>Supplier</dt><dd><strong>{order.supplier}</strong>{order.raw?.supplierEmail && <small>{order.raw.supplierEmail}</small>}</dd></div>
           <div><dt>Expected delivery</dt><dd><strong>{formatDate(order.delivery)}</strong>{order.shipment?.carrier && <small>{order.shipment.carrier}</small>}</dd></div>
           <div><dt>Delivery location</dt><dd><strong>{order.deliveryLocation}</strong></dd></div>
-          <div><dt>Escrow<HelpHint text="Funds are held by the Sui escrow contract, not by ProofPay, and are released according to the inspection result and the Dispute Resolution Policy." /></dt><dd><strong>{escrowState}</strong>{order.funding && <small>{order.funding.escrowObjectId.slice(0, 10)}...{order.funding.escrowObjectId.slice(-6)}</small>}</dd></div>
+          <div><dt>Escrow<HelpHint text="Funds are held by the Sui escrow contract, not by ProofPay, and are released according to the inspection result and the Dispute Resolution Policy." /></dt><dd><strong>{escrowState}</strong>{order.funding && <><small className="escrow-object-id" title={order.funding.escrowObjectId}>{order.funding.escrowObjectId.slice(0, 10)}...{order.funding.escrowObjectId.slice(-6)}</small><span className="escrow-object-actions"><button type="button" className="escrow-copy-button" onClick={() => void copyEscrowObject()} aria-label="Copy escrow object ID">{escrowCopied ? <Check size={11} aria-hidden="true" /> : <Copy size={11} aria-hidden="true" />}{escrowCopied ? "Copied" : "Copy"}</button>{order.source === "backend" && order.funding.verificationStatus === "verified_on_chain" && <a className="link" href={explorerObjectUrl(order.funding.escrowObjectId)} target="_blank" rel="noreferrer">View on Suiscan<ExternalLink size={11} aria-hidden="true" /></a>}</span></>}</dd></div>
         </dl>
       </LiftCard>
       {order.source === "sample" && <Notice tone="info">This is a sample order for demonstration. Every action changes only this sample. Nothing is sent to the backend or to Sui.</Notice>}
@@ -199,7 +207,6 @@ export default function OrderPage() {
                 {order.shipment && <div><dt>Shipment</dt><dd>{order.shipment.carrier}<small>Tracking {order.shipment.trackingNumber}, dispatched {formatDate(order.shipment.dispatchedAt)}</small></dd></div>}
                 {order.deliveryRecord && <div><dt>Delivered</dt><dd>{formatDateTime(order.deliveryRecord.recordedAt)}{order.deliveryRecord.reference && <small>Delivery order {order.deliveryRecord.reference}</small>}</dd></div>}
                 <div><dt>Settlement asset</dt><dd>{order.settlementAsset}</dd></div>
-                {order.funding && <div><dt><LockKeyhole size={12} aria-hidden="true" />Escrow object</dt><dd><code>{order.funding.escrowObjectId.slice(0, 14)}...{order.funding.escrowObjectId.slice(-8)}</code></dd></div>}
                 <div><dt><ShieldCheck size={12} aria-hidden="true" />Protection</dt><dd>Funds are held by the Sui escrow contract. ProofPay cannot withdraw them.</dd></div>
               </dl>
             </section>
