@@ -18,7 +18,9 @@ import { advanceSample, confirmSample, deliverSample, recordSampleInspection, sh
 import { explorerTransactionUrl } from "@/lib/sui-dapp-kit";
 import { clearPendingInvite } from "@/lib/pending-invite";
 
-export const DEMO_CONTROLS = process.env.NEXT_PUBLIC_DEMO_CONTROLS === "true" || (process.env.NODE_ENV !== "production" && process.env.NEXT_PUBLIC_DEMO_CONTROLS !== "false");
+/** Demo controls show unless explicitly disabled. Vercel values are normalized because values
+ *  entered through files or shell input can contain trailing whitespace. */
+export const DEMO_CONTROLS = process.env.NEXT_PUBLIC_DEMO_CONTROLS?.trim().toLowerCase() !== "false";
 const CARRIERS = ["DHL Express", "City-Link Express", "GDEX", "J&T Express", "Pos Laju", "Own fleet"];
 
 type Props = {

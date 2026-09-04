@@ -52,7 +52,7 @@ const flow = [
     number: "01",
     icon: WalletCards,
     title: "Fund",
-    copy: "Buyer secures SUI against the agreed purchase order.",
+    copy: "Buyer secures USDC against the agreed purchase order.",
   },
   {
     number: "02",
@@ -176,7 +176,7 @@ function LegacyGoogleLoginBanner() {
             <span className="proofpay-route-icon zklogin-route-icon">
               <Fingerprint size={18} />
             </span>
-            <small>SUI PROOF</small>
+            <small>PAYMENT PROOF</small>
             <strong>Real Sui zkLogin</strong>
           </div>
           <span className="google-route-line">
@@ -577,7 +577,7 @@ function OpsPreview() {
           Inspection closes in 43h 12m
         </span>
         <strong>
-          <AnimatedNumber value={30000} /> SUI secured
+          <AnimatedNumber value={30000} /> USDC secured
         </strong>
       </div>
     </motion.div>
