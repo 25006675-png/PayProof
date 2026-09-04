@@ -85,8 +85,10 @@ const smtpHost = config.smtpHost();
 const smtpUser = config.smtpUser();
 const smtpPassword = config.smtpPassword();
 const invitationFrom = config.invitationEmailFrom();
-const invitationEmail = smtpHost && smtpUser && smtpPassword && invitationFrom
-  ? new SmtpInvitationEmailSender({
+const invitationEmail = config.brevoApiKey() && invitationFrom
+  ? new BrevoInvitationEmailSender(config.brevoApiKey()!, invitationFrom)
+  : smtpHost && smtpUser && smtpPassword && invitationFrom
+    ? new SmtpInvitationEmailSender({
       host: smtpHost,
       port: config.smtpPort(),
       secure: config.smtpSecure(),
@@ -94,11 +96,9 @@ const invitationEmail = smtpHost && smtpUser && smtpPassword && invitationFrom
       password: smtpPassword,
       from: invitationFrom,
     })
-  : config.brevoApiKey() && invitationFrom
-    ? new BrevoInvitationEmailSender(config.brevoApiKey()!, invitationFrom)
     : config.resendApiKey() && invitationFrom
-      ? new ResendInvitationEmailSender(config.resendApiKey()!, invitationFrom)
-      : new DisabledInvitationEmailSender();
+        ? new ResendInvitationEmailSender(config.resendApiKey()!, invitationFrom)
+        : new DisabledInvitationEmailSender();
 console.log("Invitation email sender", invitationEmail instanceof SmtpInvitationEmailSender
   ? `SMTP ${smtpHost}:${config.smtpPort()} (${config.smtpSecure() ? "implicit TLS" : "STARTTLS"})`
   : invitationEmail instanceof BrevoInvitationEmailSender ? "Brevo"
