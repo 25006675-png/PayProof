@@ -67,7 +67,7 @@ function sampleReport(order: DemoOrder, disputed: number, buyerValue: number, su
       evidenceBasis: [{ evidenceId: "BUYER-DOC-1", quote: `${rejected} ${unit} crushed and leaking at handover, noted by driver` }],
       contractBasis: [{ clauseId: "AGREEMENT-2", quote: "Buyer records accepted, missing, and damaged quantities within the inspection window." }],
       policyBasis: [{ clauseId: "DP-7.3", quote: "Where goods arrive damaged and the damage is evidenced within the inspection window in DP-2.1, the damaged quantity is treated as not delivered, and is refundable at the unit price for that line." }],
-      application: `The signed delivery order records ${rejected} damaged ${unit} at handover. Under DP-7.3 the damaged quantity is treated as not delivered, so the full disputed amount of ${buyerAsk.toLocaleString("en-US")} SUI is refundable.`,
+      application: `The signed delivery order records ${rejected} damaged ${unit} at handover. Under DP-7.3 the damaged quantity is treated as not delivered, so the full disputed amount of ${buyerAsk.toLocaleString("en-US")} USDC is refundable.`,
       concessions: ["The dispatch note shows the goods left the supplier intact, so the damage occurred in carriage rather than in production."],
       inferences: ["The carrier most likely caused the damage during transit."],
       unresolvedQuestions: ["Does the carrier contract assign transit risk to the supplier?"],
@@ -92,7 +92,7 @@ function sampleReport(order: DemoOrder, disputed: number, buyerValue: number, su
       ],
       contractBasis: [{ clauseId: "AGREEMENT-2", quote: "Buyer records accepted, missing, and damaged quantities within the inspection window." }],
       policyBasis: [{ clauseId: "DP-7.3", quote: "Where goods arrive damaged and the damage is evidenced within the inspection window in DP-2.1, the damaged quantity is treated as not delivered, and is refundable at the unit price for that line." }, { clauseId: "DP-7.6", quote: "Where both sides present evidence of comparable weight on a point, no finding is made on that point, and it does not support a remedy either way." }],
-      reasoning: `DP-7.3 makes the evidenced damaged quantity refundable. The unallocated transit risk under DP-7.6 reduces the refund to 60 percent of the disputed ${disputed.toLocaleString("en-US")} SUI: ${buyerValue.toLocaleString("en-US")} SUI back to the buyer and ${supplierValue.toLocaleString("en-US")} SUI released to the supplier. Sample mediation, not produced by the live model.`,
+      reasoning: `DP-7.3 makes the evidenced damaged quantity refundable. The unallocated transit risk under DP-7.6 reduces the refund to 60 percent of the disputed ${disputed.toLocaleString("en-US")} USDC: ${buyerValue.toLocaleString("en-US")} USDC back to the buyer and ${supplierValue.toLocaleString("en-US")} USDC released to the supplier. Sample mediation, not produced by the live model.`,
       inferences: ["The damage most likely occurred during carriage."],
       evidenceSufficiency: "moderate", legalRelevance: "direct",
       unresolvedQuestions: ["Did the carrier's proof of delivery record the damage?"],
@@ -118,7 +118,7 @@ function sampleClaim(order: DemoOrder, status: ClaimView["status"], daysAgo: num
     const aiBuyer = Math.round(disputed * 0.6 * 100) / 100;
     proposals.push({
       id: "prop-ai-1", source: "ai", round: 1, buyerValue: aiBuyer, supplierValue: disputed - aiBuyer,
-      summary: `Refund ${aiBuyer.toLocaleString("en-US")} SUI to the buyer; release ${(disputed - aiBuyer).toLocaleString("en-US")} SUI to the supplier.`,
+      summary: `Refund ${aiBuyer.toLocaleString("en-US")} USDC to the buyer; release ${(disputed - aiBuyer).toLocaleString("en-US")} USDC to the supplier.`,
       reasoning: `Common ground: both sides agree ${rejected} ${first.unit} were rejected at inspection. Findings: the signed delivery order records damage at handover, which under DP-7.3 treats the damaged quantity as not delivered; the supplier's dispatch photos show the goods intact before carriage, so part of the loss falls on carriage risk shared under the agreement. Policy clauses applied: DP-7.3, DP-7.6.`,
       status: status === "settlement_pending" ? "accepted" : "open", acceptances: status === "settlement_pending" ? ["buyer", "supplier"] : [],
       citations: [{ title: "Dispute Resolution Policy", locator: "DP-7.3", excerpt: "Where goods arrive damaged and the damage is evidenced within the inspection window, the damaged quantity is treated as not delivered, and is refundable at the unit price for that line." }],
@@ -146,7 +146,7 @@ function buildSample(seed: Seed, you: string): DemoOrder {
   const events = [{ at: daysAgoIso(seed.daysAgo), label: "Order created", detail: `${initiatorRole === "buyer" ? buyer : supplier} issued the purchase order${initiatorRole === "supplier" ? " as supplier" : ""}.` }];
   const confirmer = initiatorRole === "buyer" ? supplier : buyer;
   if (step >= 1) events.push({ at: daysAgoIso(seed.daysAgo, 11), label: "Order confirmed", detail: `Confirmed by ${confirmer}, order version 1, terms version ${TERMS.version}.` });
-  if (step >= 2) events.push({ at: daysAgoIso(seed.daysAgo, 14), label: "Escrow funded", detail: `${buyer} secured ${value.toLocaleString("en-US")} SUI in escrow.` });
+  if (step >= 2) events.push({ at: daysAgoIso(seed.daysAgo, 14), label: "Escrow funded", detail: `${buyer} secured ${value.toLocaleString("en-US")} USDC in escrow.` });
   if (step >= 3) events.push({ at: daysAgoIso(Math.max(seed.daysAgo - 1, 0), 10), label: "Shipped", detail: `${supplier} dispatched the goods${seed.carrier ? ` with ${seed.carrier}` : ""}.` });
   if (step >= 4) events.push({ at: daysAgoIso(Math.max(seed.daysAgo - 2, 0), 15), label: "Delivered", detail: "Delivery was recorded at the agreed location." });
 
@@ -164,7 +164,7 @@ function buildSample(seed: Seed, you: string): DemoOrder {
     value,
     delivery: seed.delivery,
     deliveryLocation: seed.deliveryLocation,
-    settlementAsset: "Testnet SUI",
+    settlementAsset: "Testnet USDC", currency: "USDC",
     invited: seed.invited,
     inviteToken: (seed.status === "awaiting_supplier" && seed.role === "BUYER") || (seed.status === "awaiting_buyer" && seed.role === "SUPPLIER") ? `sample-${seed.reference.toLowerCase()}-invite` : undefined,
     inviteExpiresAt: seed.status === "awaiting_supplier" || seed.status === "awaiting_buyer" ? daysAgoIso(-6) : undefined,
@@ -188,7 +188,7 @@ function buildSample(seed: Seed, you: string): DemoOrder {
     };
     order.claim = sampleClaim(order, seed.status === "dispute_open" ? "supplier_review" : "negotiation_open", Math.max(seed.daysAgo - 3, 1));
     order.disputeId = order.claim.id;
-    events.push({ at: order.inspection.recordedAt, label: "Claim opened", detail: `${buyer} reported ${rejected} damaged ${first.unit}. ${order.inspection.heldValue.toLocaleString("en-US")} SUI held.` });
+    events.push({ at: order.inspection.recordedAt, label: "Claim opened", detail: `${buyer} reported ${rejected} damaged ${first.unit}. ${order.inspection.heldValue.toLocaleString("en-US")} USDC held.` });
     if (seed.status === "negotiation_open") {
       events.push({ at: daysAgoIso(Math.max(seed.daysAgo - 4, 0), 11), label: "Supplier responded", detail: `${supplier} disputed the claim and submitted dispatch evidence.` });
       events.push({ at: daysAgoIso(Math.max(seed.daysAgo - 5, 0), 10), label: "AI mediation proposal", detail: "The mediator proposed a split for both parties to review." });
@@ -316,7 +316,7 @@ export function recordSampleInspection(order: DemoOrder, lines: InspectionLine[]
     next.settlement = { buyerValue: 0, supplierValue: acceptedValue, transactionDigest: "sample-settlement-not-on-chain", verifiedOnChain: false, source: "full_acceptance" };
     return next;
   }
-  const next = withStatus(inspected, "dispute_open", `${heldValue.toLocaleString("en-US")} SUI held for the claim. Accepted value released to the supplier.`);
+  const next = withStatus(inspected, "dispute_open", `${heldValue.toLocaleString("en-US")} USDC held for the claim. Accepted value released to the supplier.`);
   next.claim = {
     id: `sample-claim-${order.reference.toLowerCase()}`, status: "supplier_review",
     totalValue: order.value, disputedValue: heldValue, requestedValue: heldValue, undisputedReleased: true,
@@ -337,7 +337,7 @@ export function respondSample(order: DemoOrder, agrees: boolean, statement: stri
   const evidence = [...claim.evidence, { id: `ev-supplier-${Date.now()}`, side: "supplier" as const, statement, files, submittedAt: new Date().toISOString() }];
   if (agrees) {
     const settled: ClaimView = { ...claim, status: "settlement_pending", evidence, settlement: { buyerValue: claim.requestedValue, supplierValue: claim.disputedValue - claim.requestedValue, executionStatus: "pending_on_chain", agreementId: "sample-agreement" } };
-    return withClaim(order, settled, "settlement_pending", "Supplier accepted the claim", `${order.supplier} agreed to refund ${claim.requestedValue.toLocaleString("en-US")} SUI.`);
+    return withClaim(order, settled, "settlement_pending", "Supplier accepted the claim", `${order.supplier} agreed to refund ${claim.requestedValue.toLocaleString("en-US")} USDC.`);
   }
   return withClaim(order, { ...claim, status: "negotiation_open", evidence }, "negotiation_open", "Supplier responded", `${order.supplier} disputed the claim and submitted evidence.`);
 }
@@ -384,7 +384,7 @@ export function mediateSample(order: DemoOrder): DemoOrder {
   const id = `prop-ai-${Date.now()}`;
   proposals.push({
     id, source: "ai", round: claim.round, buyerValue, supplierValue,
-    summary: `Refund ${buyerValue.toLocaleString("en-US")} SUI to the buyer; release ${supplierValue.toLocaleString("en-US")} SUI to the supplier.`,
+    summary: `Refund ${buyerValue.toLocaleString("en-US")} USDC to the buyer; release ${supplierValue.toLocaleString("en-US")} USDC to the supplier.`,
     reasoning: "Common ground: both sides agree the rejected quantity. Findings: the buyer's delivery record evidences damage at handover, which DP-7.3 treats as not delivered; the supplier's dispatch evidence shows the goods intact before carriage, so part of the loss sits with carriage risk. Policy clauses applied: DP-7.3, DP-7.6. Sample mediation, not produced by the live model.",
     status: "open", acceptances: [], citations: [{ title: "Dispute Resolution Policy", locator: "DP-7.3", excerpt: "Where goods arrive damaged and the damage is evidenced within the inspection window, the damaged quantity is treated as not delivered, and is refundable at the unit price for that line." }],
     unresolvedIssues: ["Open question: did the carrier's proof of delivery record the damage?"], evidenceSufficiency: "moderate", createdAt: new Date().toISOString(),
@@ -403,7 +403,7 @@ export function escalateSample(order: DemoOrder): DemoOrder {
 export function executeSampleSettlement(order: DemoOrder): DemoOrder {
   const claim = order.claim!;
   const settlement = claim.settlement ?? { buyerValue: claim.requestedValue, supplierValue: claim.disputedValue - claim.requestedValue, executionStatus: "pending_on_chain" as const, agreementId: "sample-agreement" };
-  const next = withClaim(order, { ...claim, status: "settled", settlement: { ...settlement, executionStatus: "verified_on_chain", transactionDigest: "sample-settlement-not-on-chain" } }, "settled", "Settled", `Refunded ${settlement.buyerValue.toLocaleString("en-US")} SUI to the buyer and released ${settlement.supplierValue.toLocaleString("en-US")} SUI to the supplier.`);
+  const next = withClaim(order, { ...claim, status: "settled", settlement: { ...settlement, executionStatus: "verified_on_chain", transactionDigest: "sample-settlement-not-on-chain" } }, "settled", "Settled", `Refunded ${settlement.buyerValue.toLocaleString("en-US")} USDC to the buyer and released ${settlement.supplierValue.toLocaleString("en-US")} USDC to the supplier.`);
   next.settlement = { buyerValue: settlement.buyerValue, supplierValue: (order.inspection?.acceptedValue ?? 0) + settlement.supplierValue, transactionDigest: "sample-settlement-not-on-chain", verifiedOnChain: false, source: "dispute" };
   return next;
 }

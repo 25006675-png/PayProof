@@ -56,6 +56,7 @@ const inspectionSchema = z.object({
 const shipmentSchema = z.object({
   carrier: z.string().max(128).optional(), trackingNumber: z.string().max(128).optional(),
   dispatchedAt: z.string().max(64).optional(), expectedAt: z.string().max(64).optional(),
+  transactionDigest: z.string().min(1).max(128).optional(),
 });
 const deliverySchema = z.object({ reference: z.string().max(128).optional() });
 const acceptDeliverySchema = z.object({
@@ -65,8 +66,11 @@ const fundingSchema = z.object({
   packageId: z.string().min(1).max(128), escrowObjectId: z.string().min(1).max(128), transactionDigest: z.string().min(1).max(128),
   buyerAddress: suiAddress, supplierAddress: suiAddress, arbitratorAddress: suiAddress,
   verificationStatus: z.enum(["verified_on_chain", "external_reference"]).optional(),
+  deliveryDeadlineMs: z.number().int().nonnegative().optional(), inspectionWindowMs: z.number().int().positive().optional(),
 });
-const undisputedReleaseSchema = z.object({ transactionDigest });
+const deadlineSettlementSchema = z.object({
+  kind: z.enum(["refund_unshipped", "claim_uninspected"]), transactionDigest: z.string().min(1).max(256), receiptObjectId: z.string().min(1).max(256).optional(),
+});
 const acceptInviteSchema = z.object({
   email: z.string().email().optional(), name: z.string().max(256).optional(), supplierWalletAddress: suiAddress.optional(),
 });
@@ -194,7 +198,7 @@ export function createApp(
       return c.json(await trades.acceptInvite(c.req.param("token"), c.get("actor"), body));
     });
     app.post("/v1/orders/:id/funding", async (c) => c.json(await trades.recordFunding(c.req.param("id"), c.get("actor"), fundingSchema.parse(await c.req.json()))));
-    app.post("/v1/orders/:id/undisputed-release", async (c) => c.json(await trades.recordUndisputedRelease(c.req.param("id"), c.get("actor"), undisputedReleaseSchema.parse(await c.req.json()))));
+    app.post("/v1/orders/:id/deadline-settlement", async (c) => c.json(await trades.settleByDeadline(c.req.param("id"), c.get("actor"), deadlineSettlementSchema.parse(await c.req.json()))));
     app.post("/v1/orders/:id/shipment", async (c) => {
       const body = shipmentSchema.parse(await c.req.json().catch(() => ({})));
       return c.json(await trades.markShipment(c.req.param("id"), c.get("actor"), body));
@@ -214,7 +218,8 @@ export function createApp(
         try { extracted = JSON.parse(body.extracted) as Record<string, unknown>; } catch { throw new DomainError("INVALID_DOCUMENT", "extracted must be JSON", 400); }
       }
       const bytes = new Uint8Array(await file.arrayBuffer());
-      const order = await trades.attachDocument(c.req.param("id"), c.get("actor"), { kind: kind as never, name: file.name, mimeType: file.type, bytes, transcript, extracted });
+      const anchorTransactionDigest = typeof body.anchorTransactionDigest === "string" && body.anchorTransactionDigest.trim() ? body.anchorTransactionDigest.trim() : undefined;
+      const order = await trades.attachDocument(c.req.param("id"), c.get("actor"), { kind: kind as never, name: file.name, mimeType: file.type, bytes, transcript, extracted, anchorTransactionDigest });
       return c.json(order, 201);
     });
     app.get("/v1/orders/:id/documents/:documentId", async (c) => {

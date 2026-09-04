@@ -27,7 +27,7 @@ declare module "@mysten/dapp-kit-react" {
 
 export const ESCROW_PACKAGE_ID =
   process.env.NEXT_PUBLIC_PAYPROOF_PACKAGE_ID?.trim() ||
-  "0x4e1f7a3e99809622e2adbc379967eae7d7c26375378558594528810deddd6535";
+  "0x132dda3d655724c5a667a4454baef3db3f6529ecf42ddb65132e1d9d14fd6f30";
 
 export const TESTNET_USDC_TYPE =
   "0xa1ec7fc00a6f40db9693ad1415d0c193ad3906494428cf252621037bd7117e29::usdc::USDC";

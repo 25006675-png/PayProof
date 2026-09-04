@@ -141,7 +141,7 @@ export default function OrdersPage() {
                     <td><span className="cell-party"><strong>{order.supplier}</strong>{order.role === "SUPPLIER" && <small className="side-supplying">You · Supplying</small>}</span></td>
                     <td><StatusPill status={order.status} /><small>{order.status === "settled" ? "Complete" : `Delivery ${formatDate(order.delivery)}`}</small></td>
                     <td className="next-step"><span className={`owner owner-${action.owner}`}>{action.owner === "you" ? "You" : action.owner === "counterparty" ? order.counterparty : "None"}</span><small>{action.title}</small></td>
-                    <td className="num">{money(order.value)} SUI</td>
+                    <td className="num">{money(order.value)} {order.currency}</td>
                     <td><button type="button" className="row-open" onClick={() => openOrder(order)} aria-label={`Open ${order.reference}`}>Open<ArrowRight size={13} aria-hidden="true" /></button></td>
                   </tr>
                 );

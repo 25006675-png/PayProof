@@ -3,7 +3,7 @@ import { openDispute } from "../src/domain/dispute-machine.js";
 import { GrpcSuiSettlementVerifier, type SuiSettlementReader } from "../src/integrations/sui-settlement.js";
 import { BUYER, buyer, controlledContext, openInput } from "./fixtures.js";
 
-const PACKAGE = "0x4e1f7a3e99809622e2adbc379967eae7d7c26375378558594528810deddd6535";
+const PACKAGE = "0x132dda3d655724c5a667a4454baef3db3f6529ecf42ddb65132e1d9d14fd6f30";
 const ASSET = "0x2::sui::SUI";
 const BUYER_ADDRESS = "0x97244cf38ff9fd4da3cd8a64723d0733e446f58363a6ead150813f08b7dabc65";
 const SUPPLIER_ADDRESS = "0xe54741e0417504b880ad218135d34b43b741f6a817afdbc56aef9b60c77648d4";

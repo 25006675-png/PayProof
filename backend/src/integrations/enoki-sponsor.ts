@@ -4,9 +4,12 @@ import { DomainError } from "../domain/types.js";
  *  refused, so the sponsor cannot be used as a general purpose faucet. */
 const ESCROW_ENTRY_FUNCTIONS = [
   "create",
+  "mark_shipped",
+  "anchor_evidence",
   "open_dispute",
-  "release_undisputed",
   "release_full",
+  "refund_unshipped",
+  "claim_uninspected",
   "approve_buyer",
   "approve_supplier",
   "approve_arbitrator",

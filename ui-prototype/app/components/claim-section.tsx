@@ -105,7 +105,7 @@ export function ClaimSection({ order, claim, company, onOrderChange, onClaimChan
   const propose = () => run("propose", async () => {
     const buyerValue = Math.max(0, Math.min(claim.disputedValue, buyerShare));
     const supplierValue = Math.round((claim.disputedValue - buyerValue) * 100) / 100;
-    const text = summary.trim() || `Refund ${money(buyerValue)} SUI to the buyer and release ${money(supplierValue)} SUI to the supplier.`;
+    const text = summary.trim() || `Refund ${money(buyerValue)} ${order.currency} to the buyer and release ${money(supplierValue)} ${order.currency} to the supplier.`;
     if (!live) { const next = proposeSample(order, mySide, buyerValue, supplierValue, text); onOrderChange(next); }
     else await applyLive(await proposeClaimSplit(claim.id, { buyerValue, supplierValue, summary: text, reasoning: `${company} proposed this split during negotiation.` }, open?.id));
     setProposeOpen(false);
@@ -150,12 +150,6 @@ export function ClaimSection({ order, claim, company, onOrderChange, onClaimChan
     if (!order.raw) throw new Error("Order data is missing.");
     await applyLive(await escrow.executeSettlement(order.raw, claim.id));
   }, "Settlement executed. The record is final.");
-  const releaseUndisputed = () => run("release", async () => {
-    if (!live) { onClaimChange({ ...claim, undisputedReleased: true }); onOrderChange({ ...order, claim: { ...claim, undisputedReleased: true }, events: [...order.events, { at: new Date().toISOString(), label: "Undisputed amount released", detail: `${money(released)} SUI released to ${order.supplier}.` }] }); return; }
-    if (!order.raw) throw new Error("Order data is missing.");
-    await escrow.releaseUndisputed(order.raw);
-    await applyLive(await loadClaim(claim.id));
-  }, "The accepted value was released to your wallet.");
 
   const proposals = useMemo(() => [...claim.proposals].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), [claim.proposals]);
 
@@ -175,15 +169,15 @@ export function ClaimSection({ order, claim, company, onOrderChange, onClaimChan
         {claim.status === "arbitration_pending" && <li className="current claim-stage-branch"><span className="claim-stage-dot" aria-hidden="true"><Gavel size={11} /></span>With arbitrator</li>}
       </ol>
 
-      <div className="settlement-bar" role="img" aria-label={`${money(released)} SUI released to the supplier, ${money(claim.disputedValue)} SUI disputed, of ${money(claim.totalValue)} SUI`}>
+      <div className="settlement-bar" role="img" aria-label={`${money(released)} ${order.currency} released to the supplier, ${money(claim.disputedValue)} ${order.currency} disputed, of ${money(claim.totalValue)} ${order.currency}`}>
         <div className="settlement-bar-track">
           <GrowBar className="settlement-bar-released" width={pct(released)} />
           <GrowBar className="settlement-bar-disputed" width={pct(claim.disputedValue)} />
         </div>
         <div className="settlement-bar-legend">
-          <span><i className="legend-released" />Released to supplier<strong>{money(released)} SUI</strong>{claim.undisputedReleased ? <small>Paid out</small> : <small>Releasable now</small>}</span>
-          <span><i className="legend-disputed" />In dispute<strong>{money(claim.disputedValue)} SUI</strong><small>Buyer asks {money(claim.requestedValue)} SUI back</small></span>
-          <span><i className="legend-total" />Order value<strong>{money(claim.totalValue)} SUI</strong></span>
+          <span><i className="legend-released" />Released to supplier<strong>{money(released)} {order.currency}</strong>{claim.undisputedReleased ? <small>Paid out</small> : <small>Releasable now</small>}</span>
+          <span><i className="legend-disputed" />In dispute<strong>{money(claim.disputedValue)} {order.currency}</strong><small>Buyer asks {money(claim.requestedValue)} {order.currency} back</small></span>
+          <span><i className="legend-total" />Order value<strong>{money(claim.totalValue)} {order.currency}</strong></span>
         </div>
       </div>
 
@@ -227,11 +221,11 @@ export function ClaimSection({ order, claim, company, onOrderChange, onClaimChan
                     <span className={`pill ${proposal.status === "open" ? "pill-progress" : proposal.status === "accepted" ? "pill-success" : "pill-neutral"}`}>{proposal.status === "open" ? "Open" : proposal.status === "accepted" ? "Accepted by both" : proposal.status === "rejected" ? "Rejected" : "Superseded"}</span>
                   </header>
                   <div className="proposal-split">
-                    <span><small>Back to buyer</small><strong>{money(proposal.buyerValue)} SUI</strong></span>
-                    <span><small>To supplier</small><strong>{money(proposal.supplierValue)} SUI</strong></span>
+                    <span><small>Back to buyer</small><strong>{money(proposal.buyerValue)} {order.currency}</strong></span>
+                    <span><small>To supplier</small><strong>{money(proposal.supplierValue)} {order.currency}</strong></span>
                     {proposal.evidenceSufficiency && <span><small>Evidence</small><strong className="capitalize">{proposal.evidenceSufficiency}</strong></span>}
                   </div>
-                  <p>{proposal.source === "ai" ? `Refund ${money(proposal.buyerValue)} SUI to the buyer and release ${money(proposal.supplierValue)} SUI to the supplier.` : proposal.summary}</p>
+                  <p>{proposal.source === "ai" ? `Refund ${money(proposal.buyerValue)} ${order.currency} to the buyer and release ${money(proposal.supplierValue)} ${order.currency} to the supplier.` : proposal.summary}</p>
                   {proposal.acceptances.length > 0 && proposal.status === "open" && <small className="proposal-acceptances">Accepted by {proposal.acceptances.map((side) => side === "buyer" ? order.buyer : order.supplier).join(" and ")}. Waiting for the other party.</small>}
                   {(() => {
                     const run = proposal.source === "ai" ? claim.mediations.find((entry) => entry.proposalId === proposal.id && entry.report) : undefined;
@@ -271,7 +265,7 @@ export function ClaimSection({ order, claim, company, onOrderChange, onClaimChan
           {claim.status === "supplier_review" && mySide === "supplier" && (
             <div className="claim-actions">
               <strong>Your response</strong>
-              <p>Accept the claim to refund {money(claim.requestedValue)} SUI, or dispute it with your evidence.</p>
+              <p>Accept the claim to refund {money(claim.requestedValue)} {order.currency}, or dispute it with your evidence.</p>
               <Button className="btn-primary" disabled={Boolean(busy)} onClick={() => setRespondOpen("dispute")}>Dispute with evidence</Button>
               <Button variant="outline" disabled={Boolean(busy)} onClick={() => setRespondOpen("accept")}>Accept the claim</Button>
             </div>
@@ -309,8 +303,8 @@ export function ClaimSection({ order, claim, company, onOrderChange, onClaimChan
             <div className="claim-actions">
               <strong>Agreed split</strong>
               <dl className="fact-list">
-                <div><dt>Back to buyer</dt><dd><strong>{money(claim.settlement.buyerValue)} SUI</strong></dd></div>
-                <div><dt>To supplier</dt><dd><strong>{money(claim.settlement.supplierValue)} SUI</strong></dd></div>
+                <div><dt>Back to buyer</dt><dd><strong>{money(claim.settlement.buyerValue)} {order.currency}</strong></dd></div>
+                <div><dt>To supplier</dt><dd><strong>{money(claim.settlement.supplierValue)} {order.currency}</strong></dd></div>
               </dl>
               <p>Both parties sign the exact split on Sui, then either party executes it.</p>
               <Button className="btn-primary" disabled={Boolean(busy) || signed[mySide]} onClick={() => void approve()}>{signed[mySide] ? "Signed" : busy === "approve" ? "Signing" : `Sign as ${mySide}`}</Button>
@@ -323,18 +317,17 @@ export function ClaimSection({ order, claim, company, onOrderChange, onClaimChan
             <div className="claim-actions">
               <strong>Settled</strong>
               <dl className="fact-list">
-                <div><dt>Back to buyer</dt><dd><strong>{money(claim.settlement.buyerValue)} SUI</strong></dd></div>
-                <div><dt>To supplier</dt><dd><strong>{money(claim.settlement.supplierValue)} SUI</strong></dd></div>
+                <div><dt>Back to buyer</dt><dd><strong>{money(claim.settlement.buyerValue)} {order.currency}</strong></dd></div>
+                <div><dt>To supplier</dt><dd><strong>{money(claim.settlement.supplierValue)} {order.currency}</strong></dd></div>
                 <div><dt>Sui transaction</dt><dd>{claim.settlement.transactionDigest && claim.settlement.executionStatus === "verified_on_chain" && live ? <a className="link" href={explorerTransactionUrl(claim.settlement.transactionDigest)} target="_blank" rel="noreferrer">View on Suiscan<ExternalLink size={12} aria-hidden="true" /></a> : "Sample record"}</dd></div>
               </dl>
             </div>
           )}
 
-          {mySide === "supplier" && !claim.undisputedReleased && released > 0 && claim.status !== "settled" && (
+          {mySide === "supplier" && released > 0 && (
             <div className="claim-actions claim-actions-quiet">
               <strong>Accepted value</strong>
-              <p>{money(released)} SUI is not in dispute. You can take it out of escrow now.</p>
-              <Button variant="outline" disabled={Boolean(busy)} onClick={() => void releaseUndisputed()}>{busy === "release" ? "Releasing" : "Release accepted value"}</Button>
+              <p>{money(released)} {order.currency} was paid to your wallet by the claim transaction itself. Only the disputed amount is still in escrow.</p>
             </div>
           )}
         </aside>)}
@@ -343,7 +336,7 @@ export function ClaimSection({ order, claim, company, onOrderChange, onClaimChan
       <ConsentDialog open={respondOpen !== null} onOpenChange={(value) => { if (!value) setRespondOpen(null); }} company={company}
         title={respondOpen === "accept" ? "Accept the claim" : "Dispute the claim"}
         description={respondOpen === "accept"
-          ? `${money(claim.requestedValue)} SUI goes back to ${order.buyer} and the rest of the disputed amount is released to you once both parties sign.`
+          ? `${money(claim.requestedValue)} ${order.currency} goes back to ${order.buyer} and the rest of the disputed amount is released to you once both parties sign.`
           : "Your statement and evidence are recorded on the claim and quoted by the AI mediator. Attach the dispatch note, carrier receipt or photos."}
         clauses={respondOpen === "accept"
           ? ["Accepting settles the claim at the buyer's requested amount.", "The settlement is executed on Sui once both parties sign it."]
@@ -357,10 +350,10 @@ export function ClaimSection({ order, claim, company, onOrderChange, onClaimChan
       </ConsentDialog>
 
       <ConsentDialog open={proposeOpen} onOpenChange={setProposeOpen} company={company} title="Propose a split of the disputed amount"
-        description={`${money(claim.disputedValue)} SUI is in dispute. Choose how much goes back to ${order.buyer}; the rest is released to ${order.supplier}.`}
+        description={`${money(claim.disputedValue)} ${order.currency} is in dispute. Choose how much goes back to ${order.buyer}; the rest is released to ${order.supplier}.`}
         clauses={["A proposal you make is binding on your company once the other party accepts it.", "Each proposal uses one negotiation round."]}
         confirmLabel="Send proposal" busy={busy === "propose"} onConfirm={propose}>
-        <label className="field"><span>Back to buyer (SUI)</span><Input type="number" min={0} max={claim.disputedValue} step="0.01" value={buyerShare} onChange={(event) => setBuyerShare(Number(event.target.value))} /><small>To supplier: {money(Math.max(0, claim.disputedValue - Math.min(claim.disputedValue, buyerShare)))} SUI</small></label>
+        <label className="field"><span>Back to buyer ({order.currency})</span><Input type="number" min={0} max={claim.disputedValue} step="0.01" value={buyerShare} onChange={(event) => setBuyerShare(Number(event.target.value))} /><small>To supplier: {money(Math.max(0, claim.disputedValue - Math.min(claim.disputedValue, buyerShare)))} {order.currency}</small></label>
         <label className="field"><span>Why this split (optional)</span><Input value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="Half of the damaged cartons were still saleable." /></label>
       </ConsentDialog>
     </section>

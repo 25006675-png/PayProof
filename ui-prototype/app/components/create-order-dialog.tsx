@@ -91,7 +91,7 @@ export function CreateOrderDialog({ open, onOpenChange, onCreate, profile, compa
       id: `sample-${ref.toLowerCase()}-${Date.now().toString(36)}`, reference: ref, role: buying ? "BUYER" : "SUPPLIER", initiatorRole: role, counterparty: counterpartyName.trim(),
       buyer: buying ? company : counterpartyName.trim(), supplier: buying ? counterpartyName.trim() : company, item: itemSummary(lines()), items: lines(),
       status: buying ? "awaiting_supplier" : "awaiting_buyer", value: total,
-      delivery, deliveryLocation: location.trim(), settlementAsset: "Testnet SUI", inviteToken: crypto.randomUUID(), version: 1,
+      delivery, deliveryLocation: location.trim(), settlementAsset: "Testnet USDC", currency: "USDC", inviteToken: crypto.randomUUID(), version: 1,
       source: "sample", documents, events: [{ at: new Date().toISOString(), label: "Order created", detail: `${company} issued the purchase order${buying ? "" : " as supplier"}.` }, ...documents.map((document) => ({ at: document.uploadedAt, label: "Document attached", detail: document.name }))],
     };
   };
@@ -138,7 +138,7 @@ export function CreateOrderDialog({ open, onOpenChange, onCreate, profile, compa
               <DialogDescription>{created.counterparty} has to confirm the terms before {buying ? "you can fund escrow" : "the buyer can fund escrow"}.</DialogDescription>
             </DialogHeader>
             <dl className="fact-list fact-list-inline">
-              <div><dt>Order value</dt><dd><strong>{money(created.value)} SUI</strong></dd></div>
+              <div><dt>Order value</dt><dd><strong>{money(created.value)} {created.currency}</strong></dd></div>
               <div><dt>{buying ? "Supplier" : "Buyer"}</dt><dd>{created.counterparty}</dd></div>
               <div><dt>Expected delivery</dt><dd>{created.delivery}</dd></div>
             </dl>
@@ -228,7 +228,7 @@ export function CreateOrderDialog({ open, onOpenChange, onCreate, profile, compa
             </fieldset>
 
             <div className="order-total-strip">
-              <span>Order value, settled in Testnet SUI</span>
+              <span>Order value, settled in Testnet USDC</span>
               <strong>{money(total)} <small>SUI</small></strong>
             </div>
 

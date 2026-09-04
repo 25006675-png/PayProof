@@ -43,19 +43,27 @@ export async function buildDocument(file: File, kind: DocumentKind, uploadedBy: 
   return { id: crypto.randomUUID(), kind, name: file.name, size: file.size, sha256: await sha256Hex(file), uploadedAt: new Date().toISOString(), uploadedBy, extracted, transcript };
 }
 
+/** Signs the file's SHA-256 into the order's escrow and returns the transaction digest. */
+export type Anchor = (sha256: string, kind: DocumentKind) => Promise<string>;
+
 /**
  * Attach a file to an order. Live orders upload to the backend so both parties
- * can open the file; sample orders keep it in the browser.
+ * can open the file; sample orders keep it in the browser. With an `anchor`, a
+ * funded live order first binds the file's hash to the escrow on Sui.
  */
-export async function attachFile(order: DemoOrder, file: File, kind: DocumentKind, role: "BUYER" | "SUPPLIER", extras: { transcript?: string; extracted?: ExtractedPurchaseOrder } = {}): Promise<DemoOrder> {
-  if (order.source === "backend") return withExtras(await uploadOrderDocument(order.id, file, kind, extras));
+export async function attachFile(order: DemoOrder, file: File, kind: DocumentKind, role: "BUYER" | "SUPPLIER", extras: { transcript?: string; extracted?: ExtractedPurchaseOrder; anchorTransactionDigest?: string } = {}, anchor?: Anchor): Promise<DemoOrder> {
+  if (order.source === "backend") {
+    let anchorTransactionDigest = extras.anchorTransactionDigest;
+    if (!anchorTransactionDigest && anchor && order.funding) anchorTransactionDigest = await anchor(await sha256Hex(file), kind);
+    return withExtras(await uploadOrderDocument(order.id, file, kind, { ...extras, anchorTransactionDigest }));
+  }
   return addSampleDocument(order, await buildDocument(file, kind, role, extras.extracted, extras.transcript));
 }
 
 /** Transcribes and attaches an evidence file, returning the updated order and the record the claim endpoints expect. */
-export async function prepareEvidence(order: DemoOrder, file: File, role: "BUYER" | "SUPPLIER"): Promise<{ order: DemoOrder; input: EvidenceFileInput }> {
+export async function prepareEvidence(order: DemoOrder, file: File, role: "BUYER" | "SUPPLIER", anchor?: Anchor): Promise<{ order: DemoOrder; input: EvidenceFileInput }> {
   const transcript = await transcribeEvidence(file).catch(() => undefined);
-  const next = await attachFile(order, file, "claim_evidence", role, { transcript });
+  const next = await attachFile(order, file, "claim_evidence", role, { transcript }, anchor);
   const sha256 = await sha256Hex(file);
   const stored = next.documents.find((document) => document.sha256 === sha256);
   return { order: next, input: { storagePath: stored?.storagePath ?? `browser://${sha256}`, sha256, mimeType: file.type || "application/octet-stream", sizeBytes: file.size, transcript } };
@@ -111,7 +119,7 @@ export function ExtractionComparison({ order, document, onClose }: { order: Demo
           {comparison.map(({ item, matched, quantityMatches, priceMatches }) => (
             <tr key={item.id}>
               <td><strong>{item.description}</strong>{matched && matched.description !== item.description && <small>Read as {matched.description}</small>}</td>
-              <td>{money(item.quantity)} {item.unit}<small>{money(item.unitPrice)} SUI each</small></td>
+              <td>{money(item.quantity)} {item.unit}<small>{money(item.unitPrice)} {order.currency} each</small></td>
               <td>{matched ? <>{money(matched.quantity)} {matched.unit}<small>{matched.unitPrice === null ? "No unit price" : `${money(matched.unitPrice)} each`}</small></> : <span className="muted">Not found</span>}</td>
               <td>{!matched ? <span className="pill pill-attention">Missing</span> : quantityMatches && priceMatches ? <span className="pill pill-success">Matches</span> : <span className="pill pill-danger">{quantityMatches ? "Price differs" : "Quantity differs"}</span>}</td>
             </tr>

@@ -56,6 +56,9 @@ export interface TradeShipment {
   dispatchedAt: string;
   expectedAt?: string;
   recordedBy: string;
+  /** The mark_shipped transaction, when the supplier signed shipment on Sui. */
+  transactionDigest?: string;
+  verificationStatus?: "verified_on_chain" | "external_reference";
 }
 
 export interface TradeDeliveryRecord {
@@ -84,6 +87,8 @@ export interface TradeDocument {
   uploadedBy: string;
   uploadedRole: TradeInitiatorRole;
   uploadedAt: string;
+  /** The anchor_evidence transaction that bound this file's hash to the escrow. */
+  anchor?: { transactionDigest: string; verificationStatus: "verified_on_chain" | "external_reference" };
   /** Plain-text reading of the file, produced once at upload for the record and the mediator. */
   transcript?: string;
   /** Structured purchase-order extraction, when the file was read as a purchase order. */
@@ -126,7 +131,12 @@ export interface TradeOrder {
     arbitratorAddress: string;
     verificationStatus: "verified_on_chain" | "external_reference";
     fundedAt: string;
+    /** Deadlines written into the escrow: the supplier must ship by the first, and the buyer must
+     *  inspect within the second after the later of shipment and that deadline. */
+    deliveryDeadlineMs?: number;
+    inspectionWindowMs?: number;
   };
+  /** Set when the claim transaction paid the undisputed value to the supplier. */
   undisputedRelease?: {
     transactionDigest: string;
     verificationStatus: "verified_on_chain" | "external_reference";
@@ -144,8 +154,9 @@ export interface TradeOrder {
     transactionDigest?: string;
     receiptObjectId?: string;
     verifiedOnChain: boolean;
-    /** "full_acceptance" when the buyer released the whole escrow without a dispute. */
-    source?: "full_acceptance" | "dispute";
+    /** "full_acceptance" when the buyer released the whole escrow without a dispute; the two
+     *  deadline sources are the contract's no-signature-needed paths. */
+    source?: "full_acceptance" | "dispute" | "refund_unshipped" | "claim_uninspected";
   };
   version: number;
   createdAt: string;
@@ -191,17 +202,30 @@ export interface FundingInput {
   supplierAddress: string;
   arbitratorAddress: string;
   verificationStatus?: "verified_on_chain" | "external_reference";
+  deliveryDeadlineMs?: number;
+  inspectionWindowMs?: number;
+}
+
+export interface ShipmentInput {
+  carrier?: string;
+  trackingNumber?: string;
+  dispatchedAt?: string;
+  expectedAt?: string;
+  transactionDigest?: string;
+}
+
+export type DeadlineSettlementKind = "refund_unshipped" | "claim_uninspected";
+
+export interface DeadlineSettlementInput {
+  kind: DeadlineSettlementKind;
+  transactionDigest: string;
+  receiptObjectId?: string;
 }
 
 export interface AcceptDeliveryInput {
   transactionDigest: string;
   receiptObjectId?: string;
   inspection?: { lines: TradeInspectionLine[]; note?: string };
-  verificationStatus?: "verified_on_chain" | "external_reference";
-}
-
-export interface UndisputedReleaseInput {
-  transactionDigest: string;
   verificationStatus?: "verified_on_chain" | "external_reference";
 }
 

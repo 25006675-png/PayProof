@@ -73,13 +73,10 @@ describe("trade lifecycle API", () => {
     expect(payload.dispute.status).toBe("supplier_review");
     expect(payload.order.status).toBe("dispute_open");
 
-    const release = await app.request(`/v1/orders/${order.id}/undisputed-release`, { method: "POST", headers: auth(supplierSession.accessToken), body: JSON.stringify({ transactionDigest: "7h6Qw7kqQn8tT7mM9nV3aX2pL4rS5dF6gH8jK9mN2pQ" }) });
-    expect(release.status).toBe(200);
-    expect((await release.json() as any).undisputedRelease.verificationStatus).toBe("external_reference");
-    const releaseRetry = await app.request(`/v1/orders/${order.id}/undisputed-release`, { method: "POST", headers: auth(supplierSession.accessToken), body: JSON.stringify({ transactionDigest: "7h6Qw7kqQn8tT7mM9nV3aX2pL4rS5dF6gH8jK9mN2pQ" }) });
-    expect(releaseRetry.status).toBe(409);
-    const buyerRelease = await app.request(`/v1/orders/${order.id}/undisputed-release`, { method: "POST", headers: buyerHeaders, body: JSON.stringify({ transactionDigest: "8h6Qw7kqQn8tT7mM9nV3aX2pL4rS5dF6gH8jK9mN2pQ" }) });
-    expect(buyerRelease.status).toBe(403);
+    // The claim transaction itself pays the undisputed value, so the order records the release at once.
+    expect(payload.order.undisputedRelease).toMatchObject({ transactionDigest: "111111111111111111111111", verificationStatus: "external_reference" });
+    const lateRefund = await app.request(`/v1/orders/${order.id}/deadline-settlement`, { method: "POST", headers: buyerHeaders, body: JSON.stringify({ kind: "refund_unshipped", transactionDigest: "8h6Qw7kqQn8tT7mM9nV3aX2pL4rS5dF6gH8jK9mN2pQ" }) });
+    expect(lateRefund.status).toBe(409);
 
     const responded = await app.request(`/v1/disputes/${payload.dispute.id}/supplier-response`, { method: "POST", headers: auth(supplierSession.accessToken), body: JSON.stringify({ agrees: false, statement: "Dispatch evidence shows the goods left intact." }) });
     expect(responded.status).toBe(200);
@@ -327,5 +324,62 @@ describe("trade lifecycle API", () => {
     const supplierDoc = await trades.attachDocument(order.id, supplier, { kind: "dispatch_evidence", name: "dispatch.txt", mimeType: "text/plain", bytes });
     expect(supplierDoc.documents).toHaveLength(2);
     expect(supplierDoc.documents![1]!.uploadedRole).toBe("supplier");
+    await expect(trades.attachDocument(order.id, supplier, { kind: "dispatch_evidence", name: "anchored.txt", mimeType: "text/plain", bytes, anchorTransactionDigest: "anchor-1" })).rejects.toMatchObject({ code: "FUNDING_REQUIRED" });
+  });
+
+  it("records the undisputed release from the claim transaction and keeps the escrow deadlines", async () => {
+    const control = controlledContext();
+    const disputes = new DisputeService(new MemoryDisputeStore(), control.ctx);
+    const trades = new TradeService(new MemoryTradeStore(), disputes, control.ctx);
+    const buyer = { id: BUYER, email: "buyer-claim@example.com", name: "Buyer" };
+    const supplier = { id: SUPPLIER, email: "supplier-claim@example.com", name: "Supplier" };
+    const order = await trades.createOrder({ reference: "PO-CLAIM", supplierEmail: supplier.email, arbitratorId: ARBITRATOR, assetType: "USDC", amountUnits: "100000", description: "Goods", deliveryDate: "2026-09-20", deliveryLocation: "PJ", lineItems: [{ id: "line", description: "Goods", quantity: "1", unit: "lot", unitPriceUnits: "100000" }] }, buyer);
+    await trades.createInvite(order.id, buyer);
+    await trades.acceptInvitation(order.id, supplier);
+    const deadline = control.ctx.now().getTime() + 5 * 24 * 60 * 60 * 1000;
+    const funded = await trades.recordFunding(order.id, buyer, { packageId: "0x1", escrowObjectId: "0x2", transactionDigest: "fund-claim", buyerAddress: "0xa", supplierAddress: "0xb", arbitratorAddress: "0xc", deliveryDeadlineMs: deadline, inspectionWindowMs: 7 * 24 * 60 * 60 * 1000 });
+    expect(funded.funding).toMatchObject({ deliveryDeadlineMs: deadline, inspectionWindowMs: 7 * 24 * 60 * 60 * 1000 });
+    const shipped = await trades.markShipment(order.id, supplier, { carrier: "GDEX", trackingNumber: "GD1", transactionDigest: "ship-claim" });
+    expect(shipped.shipment).toMatchObject({ carrier: "GDEX", transactionDigest: "ship-claim", verificationStatus: "external_reference" });
+    await trades.markDelivered(order.id, buyer);
+    const opened = await trades.openDispute(order.id, buyer, { disputeTransactionDigest: "dispute-claim", disputedUnits: "30000", requestedBuyerUnits: "20000", claim: "Short delivery", evidenceStatement: "Buyer evidence", negotiationDeadline: "2026-09-03T00:00:00.000Z" });
+    expect(opened.order.undisputedRelease).toMatchObject({ transactionDigest: "dispute-claim", verificationStatus: "external_reference" });
+    expect(opened.dispute.undisputedReleasedUnits).toBe("70000");
+  });
+
+  it("settles by deadline only for the entitled party once the escrow deadline has passed", async () => {
+    const control = controlledContext();
+    const disputes = new DisputeService(new MemoryDisputeStore(), control.ctx);
+    const trades = new TradeService(new MemoryTradeStore(), disputes, control.ctx);
+    const buyer = { id: BUYER, email: "buyer-deadline@example.com", name: "Buyer" };
+    const supplier = { id: SUPPLIER, email: "supplier-deadline@example.com", name: "Supplier" };
+    const create = async (reference: string) => {
+      const order = await trades.createOrder({ reference, supplierEmail: supplier.email, arbitratorId: ARBITRATOR, assetType: "USDC", amountUnits: "5000", description: "Goods", deliveryDate: "2026-09-20", deliveryLocation: "PJ", lineItems: [{ id: "line", description: "Goods", quantity: "1", unit: "lot", unitPriceUnits: "5000" }] }, buyer);
+      await trades.createInvite(order.id, buyer);
+      await trades.acceptInvitation(order.id, supplier);
+      return order;
+    };
+    const day = 24 * 60 * 60 * 1000;
+    const now = control.ctx.now().getTime();
+
+    const unshipped = await create("PO-UNSHIPPED");
+    await trades.recordFunding(unshipped.id, buyer, { packageId: "0x1", escrowObjectId: "0x2", transactionDigest: "fund-u", buyerAddress: "0xa", supplierAddress: "0xb", arbitratorAddress: "0xc", deliveryDeadlineMs: now + day, inspectionWindowMs: 7 * day });
+    await expect(trades.settleByDeadline(unshipped.id, buyer, { kind: "refund_unshipped", transactionDigest: "refund-1" })).rejects.toMatchObject({ code: "DEADLINE_NOT_REACHED" });
+    await expect(trades.settleByDeadline(unshipped.id, supplier, { kind: "refund_unshipped", transactionDigest: "refund-1" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    control.set(new Date(now + 2 * day).toISOString());
+    await expect(trades.settleByDeadline(unshipped.id, supplier, { kind: "claim_uninspected", transactionDigest: "claim-1" })).rejects.toMatchObject({ code: "INVALID_STATE" });
+    const refunded = await trades.settleByDeadline(unshipped.id, buyer, { kind: "refund_unshipped", transactionDigest: "refund-1", receiptObjectId: "0x9" });
+    expect(refunded.status).toBe("settled");
+    expect(refunded.settlement).toMatchObject({ buyerUnits: "5000", supplierUnits: "0", source: "refund_unshipped", receiptObjectId: "0x9", verifiedOnChain: false });
+
+    const uninspected = await create("PO-UNINSPECTED");
+    const later = control.ctx.now().getTime();
+    await trades.recordFunding(uninspected.id, buyer, { packageId: "0x1", escrowObjectId: "0x3", transactionDigest: "fund-i", buyerAddress: "0xa", supplierAddress: "0xb", arbitratorAddress: "0xc", deliveryDeadlineMs: later + day, inspectionWindowMs: 7 * day });
+    await trades.markShipment(uninspected.id, supplier, { carrier: "GDEX", trackingNumber: "GD2", transactionDigest: "ship-i" });
+    await expect(trades.settleByDeadline(uninspected.id, buyer, { kind: "refund_unshipped", transactionDigest: "refund-2" })).rejects.toMatchObject({ code: "INVALID_STATE" });
+    await expect(trades.settleByDeadline(uninspected.id, supplier, { kind: "claim_uninspected", transactionDigest: "claim-2" })).rejects.toMatchObject({ code: "DEADLINE_NOT_REACHED" });
+    control.set(new Date(later + 9 * day).toISOString());
+    const claimed = await trades.settleByDeadline(uninspected.id, supplier, { kind: "claim_uninspected", transactionDigest: "claim-2" });
+    expect(claimed.settlement).toMatchObject({ buyerUnits: "0", supplierUnits: "5000", source: "claim_uninspected" });
   });
 });

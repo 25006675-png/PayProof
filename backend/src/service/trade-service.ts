@@ -4,7 +4,9 @@ import type { DisputeService } from "./dispute-service.js";
 import { DomainError, type Actor, type DomainContext, type EvidenceFile } from "../domain/types.js";
 import type {
   AcceptDeliveryInput,
+  DeadlineSettlementInput,
   FundingInput,
+  ShipmentInput,
   TradeDocument,
   TradeDocumentKind,
   TradeInitiatorRole,
@@ -15,7 +17,6 @@ import type {
   TradeOrderStatus,
   TradeOrderWithInvite,
   TradeLineItem,
-  UndisputedReleaseInput,
 } from "../domain/trade-types.js";
 import type { TradeStore } from "../store/trade-store.js";
 import { MemoryDocumentStore, type DocumentStore } from "../store/document-store.js";
@@ -54,6 +55,8 @@ export interface AttachDocumentInput {
   bytes: Uint8Array;
   transcript?: string;
   extracted?: Record<string, unknown>;
+  /** The anchor_evidence (or mark_shipped) transaction that carries this file's hash. */
+  anchorTransactionDigest?: string;
 }
 
 const DOCUMENT_KINDS: TradeDocumentKind[] = ["internal_agreement", "purchase_order", "dispatch_evidence", "delivery_evidence", "inspection_evidence", "claim_evidence"];
@@ -161,13 +164,26 @@ export class TradeService {
       : order.supplierId === actor.id || (order.supplierOrganizationId && await this.hasCapability(actor, "supply", order.supplierOrganizationId))
         ? "supplier"
         : pendingSide(order) ?? "supplier";
+    // Hash the raw bytes so the record matches what the browser hashed and anchored on Sui.
+    const fileHash = createHash("sha256").update(input.bytes).digest("hex");
+    let anchor: TradeDocument["anchor"];
+    const anchorDigest = input.anchorTransactionDigest?.trim();
+    if (anchorDigest) {
+      if (!order.funding) throw new DomainError("FUNDING_REQUIRED", "Evidence can only be anchored to a funded order", 409);
+      let verificationStatus: "verified_on_chain" | "external_reference" = "external_reference";
+      if (this.fundingVerifier?.verifyEvidenceAnchor) {
+        await this.fundingVerifier.verifyEvidenceAnchor(order, anchorDigest, fileHash);
+        verificationStatus = "verified_on_chain";
+      }
+      anchor = { transactionDigest: anchorDigest, verificationStatus };
+    }
     const id = this.ctx.id();
     const storagePath = `orders/${order.id}/${id}`;
     await this.documents.put(storagePath, input.bytes, input.mimeType || "application/octet-stream");
     const now = this.ctx.now().toISOString();
     const document: TradeDocument = {
       id, kind: input.kind, name: input.name.trim().slice(0, 256), mimeType: input.mimeType || "application/octet-stream", sizeBytes: input.bytes.byteLength,
-      sha256: sha256(Buffer.from(input.bytes).toString("binary")), storagePath, uploadedBy: actor.id, uploadedRole: role, uploadedAt: now,
+      sha256: fileHash, storagePath, uploadedBy: actor.id, uploadedRole: role, uploadedAt: now, anchor,
       transcript: input.transcript?.trim().slice(0, 50_000) || undefined, extracted: input.extracted,
     };
     // Re-read so a concurrent update (for example the claim that references this file) is not lost.
@@ -431,27 +447,42 @@ export class TradeService {
     if (order.supplierWalletAddress && !sameAddress(order.supplierWalletAddress, input.supplierAddress)) throw new DomainError("SUPPLIER_WALLET_MISMATCH", "Funding must pay the supplier wallet recorded on the order", 409);
     if (order.arbitratorWalletAddress && !sameAddress(order.arbitratorWalletAddress, input.arbitratorAddress)) throw new DomainError("ARBITRATOR_WALLET_MISMATCH", "Funding must use the arbitrator wallet recorded on the order", 409);
     let verificationStatus: "verified_on_chain" | "external_reference" = "external_reference";
+    let deadlines = { deliveryDeadlineMs: input.deliveryDeadlineMs, inspectionWindowMs: input.inspectionWindowMs };
     if (this.fundingVerifier) {
-      await this.fundingVerifier.verify(order, input);
+      const verified = await this.fundingVerifier.verify(order, input);
       verificationStatus = "verified_on_chain";
+      // The escrow's own deadlines win over anything the client sent.
+      deadlines = { deliveryDeadlineMs: verified.deliveryDeadlineMs ?? input.deliveryDeadlineMs, inspectionWindowMs: verified.inspectionWindowMs ?? input.inspectionWindowMs };
     }
     const now = this.ctx.now().toISOString();
     const updated: TradeOrder = {
       ...order, status: "funded", updatedAt: now, version: order.version + 1,
-      funding: { ...input, verificationStatus, fundedAt: now },
+      funding: { ...input, ...deadlines, verificationStatus, fundedAt: now },
     };
     await this.store.saveOrder(updated, order.version);
     return updated;
   }
 
-  async markShipment(orderId: string, actor: Actor, input?: { carrier?: string; trackingNumber?: string; dispatchedAt?: string; expectedAt?: string }): Promise<TradeOrder> {
+  async markShipment(orderId: string, actor: Actor, input?: ShipmentInput): Promise<TradeOrder> {
     const order = await this.getOrder(orderId, actor);
     await this.requireSupplierAuthority(order, actor, "Only an authorized supplier can mark shipment");
     if (order.status !== "funded") throw new DomainError("INVALID_STATE", "The order must be funded before shipment");
     const now = this.ctx.now().toISOString();
-    const shipment = input && (input.carrier || input.trackingNumber)
+    const transactionDigest = input?.transactionDigest?.trim();
+    let proof: { transactionDigest?: string; verificationStatus?: "verified_on_chain" | "external_reference" } = {};
+    if (transactionDigest) {
+      if (!order.funding) throw new DomainError("FUNDING_REQUIRED", "Shipment can only be signed against a funded escrow", 409);
+      let verificationStatus: "verified_on_chain" | "external_reference" = "external_reference";
+      if (this.fundingVerifier?.verifyShipment) {
+        await this.fundingVerifier.verifyShipment(order, transactionDigest);
+        verificationStatus = "verified_on_chain";
+      }
+      proof = { transactionDigest, verificationStatus };
+    }
+    const details = input && (input.carrier || input.trackingNumber)
       ? { carrier: input.carrier?.trim() || "Not stated", trackingNumber: input.trackingNumber?.trim() || "", dispatchedAt: input.dispatchedAt?.trim() || now, expectedAt: input.expectedAt?.trim() || undefined, recordedBy: actor.id }
-      : order.shipment;
+      : order.shipment ?? (transactionDigest ? { carrier: "Not stated", trackingNumber: "", dispatchedAt: now, recordedBy: actor.id } : undefined);
+    const shipment = details ? { ...details, ...proof } : undefined;
     const next: TradeOrder = { ...order, status: "in_transit", shipment, updatedAt: now, version: order.version + 1 };
     await this.store.saveOrder(next, order.version);
     return next;
@@ -470,26 +501,44 @@ export class TradeService {
     return next;
   }
 
-  async recordUndisputedRelease(orderId: string, actor: Actor, input: UndisputedReleaseInput): Promise<TradeOrder> {
+  /**
+   * A deadline path closed the escrow without the counterparty: the buyer reclaimed an order the
+   * supplier never shipped, or the supplier claimed a delivery the buyer never inspected. The
+   * contract enforces the deadline; this records the receipt against the order.
+   */
+  async settleByDeadline(orderId: string, actor: Actor, input: DeadlineSettlementInput): Promise<TradeOrder> {
     const order = await this.getOrder(orderId, actor);
-    await this.requireSupplierAuthority(order, actor, "Only an authorized supplier can release the undisputed balance");
-    if (!order.funding || !order.disputeId) throw new DomainError("DISPUTE_REQUIRED", "A funded order with an open dispute is required", 409);
-    if (order.undisputedRelease) throw new DomainError("ALREADY_RELEASED", "The undisputed balance has already been released", 409);
-    const dispute = await this.disputes.get(order.disputeId);
-    if (dispute.orderId !== order.id) throw new DomainError("DISPUTE_ORDER_MISMATCH", "The dispute is not bound to this order", 409);
-    if (dispute.status === "settled") throw new DomainError("INVALID_STATE", "The dispute has already been settled", 409);
-    if (!input.transactionDigest?.trim()) throw new DomainError("INVALID_RELEASE", "A release transaction digest is required", 400);
+    if (!order.funding || !order.supplierId || !order.buyerId) throw new DomainError("FUNDING_REQUIRED", "Only a funded order can be settled by deadline", 409);
+    if (!input.transactionDigest?.trim()) throw new DomainError("INVALID_RELEASE", "A settlement transaction digest is required", 400);
+    const refund = input.kind === "refund_unshipped";
+    const nowMs = this.ctx.now().getTime();
+    if (refund) {
+      await this.requireBuyerAuthority(order, actor, "Only an authorized buyer can reclaim an unshipped order");
+      if (order.status !== "funded" || order.shipment?.transactionDigest) throw new DomainError("INVALID_STATE", "Only a funded order that has not been shipped can be reclaimed");
+      if (order.funding.deliveryDeadlineMs !== undefined && nowMs <= order.funding.deliveryDeadlineMs) throw new DomainError("DEADLINE_NOT_REACHED", "The delivery deadline has not passed yet", 409);
+    } else {
+      await this.requireSupplierAuthority(order, actor, "Only an authorized supplier can claim an uninspected delivery");
+      if (!["in_transit", "delivered"].includes(order.status)) throw new DomainError("INVALID_STATE", "Only a shipped order awaiting inspection can be claimed");
+      const { deliveryDeadlineMs, inspectionWindowMs } = order.funding;
+      if (deliveryDeadlineMs !== undefined && inspectionWindowMs !== undefined) {
+        const shippedAt = order.shipment ? new Date(order.shipment.dispatchedAt).getTime() : 0;
+        const closesAt = Math.max(deliveryDeadlineMs, Number.isFinite(shippedAt) ? shippedAt : 0) + inspectionWindowMs;
+        if (nowMs <= closesAt) throw new DomainError("DEADLINE_NOT_REACHED", "The inspection window has not closed yet", 409);
+      }
+    }
     let verificationStatus: "verified_on_chain" | "external_reference" = "external_reference";
-    if (this.fundingVerifier?.verifyUndisputedRelease) {
-      await this.fundingVerifier.verifyUndisputedRelease(order, dispute, input);
+    if (this.fundingVerifier?.verifyDeadlineSettlement) {
+      await this.fundingVerifier.verifyDeadlineSettlement(order, input);
       verificationStatus = "verified_on_chain";
     }
     const now = this.ctx.now().toISOString();
     const updated: TradeOrder = {
-      ...order,
-      undisputedRelease: { transactionDigest: input.transactionDigest, verificationStatus, releasedAt: now },
-      updatedAt: now,
-      version: order.version + 1,
+      ...order, status: "settled", updatedAt: now, version: order.version + 1,
+      settlement: {
+        buyerUnits: refund ? order.amountUnits : "0", supplierUnits: refund ? "0" : order.amountUnits,
+        transactionDigest: input.transactionDigest.trim(), receiptObjectId: input.receiptObjectId?.trim(),
+        verifiedOnChain: verificationStatus === "verified_on_chain", source: input.kind,
+      },
     };
     await this.store.saveOrder(updated, order.version);
     return updated;
@@ -500,6 +549,13 @@ export class TradeService {
     await this.requireBuyerAuthority(order, actor, "Only an authorized buyer can open a dispute");
     if (!order.supplierId || !order.buyerId || !order.funding) throw new DomainError("FUNDING_REQUIRED", "A funded order with a supplier is required before opening a dispute", 409);
     if (!["funded", "in_transit", "delivered"].includes(order.status)) throw new DomainError("INVALID_STATE", "This order cannot be disputed at its current stage");
+    // The claim transaction pays the undisputed value to the supplier itself, so the release is
+    // recorded here rather than as a separate supplier step.
+    let releaseStatus: "verified_on_chain" | "external_reference" = "external_reference";
+    if (this.fundingVerifier?.verifyDisputeOpened) {
+      await this.fundingVerifier.verifyDisputeOpened(order, { disputeTransactionDigest: input.disputeTransactionDigest, disputedUnits: input.disputedUnits, requestedBuyerUnits: input.requestedBuyerUnits });
+      releaseStatus = "verified_on_chain";
+    }
     const dispute = await this.disputes.open({
       orderId: order.id, buyerId: order.buyerId, supplierId: order.supplierId, arbitratorId: order.arbitratorId,
       assetType: order.assetType, totalEscrowUnits: order.amountUnits, disputedUnits: input.disputedUnits,
@@ -522,6 +578,7 @@ export class TradeService {
     const updated: TradeOrder = {
       ...order, disputeId: dispute.id, status: "dispute_open", updatedAt: now, version: order.version + 1,
       inspection: input.inspection ? { lines: structuredClone(input.inspection.lines), note: input.inspection.note?.trim(), recordedBy: actor.id, recordedAt: now } : order.inspection,
+      undisputedRelease: { transactionDigest: input.disputeTransactionDigest, verificationStatus: releaseStatus, releasedAt: now },
     };
     await this.store.saveOrder(updated, order.version);
     return { order: updated, dispute };
@@ -578,7 +635,7 @@ export class TradeService {
       : dispute.status === "settlement_pending" ? "settlement_pending"
       : "settled";
     const next: TradeOrder = { ...order, status, updatedAt: this.ctx.now().toISOString(), version: order.version + 1 };
-    if (dispute.settlement) next.settlement = { buyerUnits: dispute.settlement.buyerUnits, supplierUnits: dispute.settlement.supplierUnits, verifiedOnChain: dispute.settlement.executionStatus === "verified_on_chain", transactionDigest: dispute.settlement.execution?.transactionDigest, receiptObjectId: dispute.settlement.execution?.receiptObjectId };
+    if (dispute.settlement) next.settlement = { buyerUnits: dispute.settlement.buyerUnits, supplierUnits: dispute.settlement.supplierUnits, verifiedOnChain: dispute.settlement.executionStatus === "verified_on_chain", transactionDigest: dispute.settlement.execution?.transactionDigest, receiptObjectId: dispute.settlement.execution?.receiptObjectId, source: "dispute" };
     await this.store.saveOrder(next, order.version);
     return next;
   }

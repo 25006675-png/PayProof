@@ -43,6 +43,7 @@ import {
   TESTNET_USDC_TYPE,
 } from "@/lib/sui-dapp-kit";
 import { loadZkLoginSession, zkLoginSigner, type ZkLoginSession } from "@/lib/auth";
+import { INSPECTION_WINDOW_MS, deliveryDeadlineMs } from "@/lib/escrow-actions";
 
 const DEMO_ARBITRATOR_ID = "99999999-9999-4999-8999-999999999999";
 const DEFAULT_SUPPLIER_ADDRESS = `0x${"b".repeat(64)}`;
@@ -473,6 +474,8 @@ export function LiveTradeConsole() {
           tx.pure.address(arbitratorAddress),
           tx.pure.vector("u8", hexBytes(activeOrder.orderHash)),
           tx.pure.string(activeOrder.reference),
+          tx.pure.u64(deliveryDeadlineMs(activeOrder.deliveryDate)),
+          tx.pure.u64(INSPECTION_WINDOW_MS),
           tx.object.clock(),
         ],
       });
@@ -555,45 +558,15 @@ export function LiveTradeConsole() {
       return;
     }
     if (!dispute) return;
-    setBusy("release-undisputed");
+    // The escrow contract pays the undisputed value inside the buyer's open_dispute
+    // transaction, so there is no separate supplier release to sign any more.
     setError("");
-    try {
-      const tx = new Transaction();
-      tx.moveCall({
-        target: `${ESCROW_PACKAGE_ID}::escrow::release_undisputed`,
-        typeArguments: [activeOrder.assetType],
-        arguments: [tx.object(activeOrder.funding.escrowObjectId)],
-      });
-      const result = (await signAndExecute(tx)) as any;
-      if (result.FailedTransaction)
-        throw new Error(
-          result.FailedTransaction.status?.error?.message ??
-            "The undisputed release transaction failed.",
-        );
-      const digest = result.Transaction.digest as string;
-      await client.waitForTransaction({
-        digest,
-        include: { events: true },
-        timeout: 60_000,
-        pollSchedule: [0, 500, 1_000, 2_000],
-      });
-      const updated = await apiRequest<TradeOrder>(
-        `/v1/orders/${activeOrder.id}/undisputed-release`,
-        { method: "POST", body: JSON.stringify({ transactionDigest: digest }) },
-      );
-      setActiveOrder(updated);
-      setOrders((current) =>
-        current.map((item) => (item.id === updated.id ? updated : item)),
-      );
-      setUndisputedReleased(true);
-      setNotice(
-        "The undisputed balance was released to the supplier on Sui. The disputed portion remains held for settlement.",
-      );
-    } catch (caught) {
-      setError(errorText(caught));
-    } finally {
-      setBusy("");
-    }
+    setUndisputedReleased(Boolean(activeOrder.undisputedRelease));
+    setNotice(
+      activeOrder.undisputedRelease
+        ? "The undisputed value was paid to the supplier by the claim transaction itself. Only the disputed portion remains held."
+        : "This order predates the current escrow contract. Its claim transaction did not carry the undisputed release, so refresh the order to see its current state.",
+    );
   }
 
   async function markDelivered() {

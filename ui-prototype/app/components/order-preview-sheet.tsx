@@ -26,11 +26,11 @@ export function OrderPreviewSheet({ order, open, onOpenChange }: { order: DemoOr
             <p>{action.detail}</p>
           </div>
           <dl className="fact-list">
-            <div><dt>Order value</dt><dd><strong>{money(order.value)} SUI</strong></dd></div>
+            <div><dt>Order value</dt><dd><strong>{money(order.value)} {order.currency}</strong></dd></div>
             <div><dt>Expected delivery</dt><dd>{formatDate(order.delivery)}</dd></div>
             <div><dt>Delivery location</dt><dd>{order.deliveryLocation}</dd></div>
             {order.shipment && <div><dt>Shipment</dt><dd>{order.shipment.carrier}<small>Tracking {order.shipment.trackingNumber}</small></dd></div>}
-            {order.inspection && order.inspection.heldValue > 0 && <div><dt>Held for claim</dt><dd>{money(order.inspection.heldValue)} SUI</dd></div>}
+            {order.inspection && order.inspection.heldValue > 0 && <div><dt>Held for claim</dt><dd>{money(order.inspection.heldValue)} {order.currency}</dd></div>}
           </dl>
           <section className="preview-lines">
             <div className="preview-lines-head"><strong>Order lines</strong><span>{order.items.length} {order.items.length === 1 ? "line" : "lines"}</span></div>

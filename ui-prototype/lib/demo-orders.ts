@@ -107,6 +107,15 @@ export type OrderShipment = {
   trackingNumber: string;
   dispatchedAt: string;
   expectedAt?: string;
+  /** The mark_shipped transaction on Sui, for live orders where the supplier signed shipment. */
+  transactionDigest?: string;
+  verifiedOnChain?: boolean;
+};
+
+/** Deadlines written into the escrow at funding. */
+export type OrderDeadlines = {
+  deliveryDeadlineMs: number;
+  inspectionClosesAtMs: number;
 };
 
 export type OrderDelivery = {
@@ -194,6 +203,9 @@ export type DemoOrder = {
   delivery: string;
   deliveryLocation: string;
   settlementAsset: "Testnet SUI" | "Testnet USDC";
+  /** Symbol shown next to every amount on this order. */
+  currency: string;
+  deadlines?: OrderDeadlines;
   inviteToken?: string;
   inviteExpiresAt?: string;
   /** True when the signed-in account is the invited party who still has to confirm. */
@@ -208,7 +220,7 @@ export type DemoOrder = {
   claim?: ClaimView;
   events: OrderEvent[];
   funding?: TradeOrder["funding"];
-  settlement?: { buyerValue: number; supplierValue: number; transactionDigest?: string; verifiedOnChain: boolean; source?: "full_acceptance" | "dispute" };
+  settlement?: { buyerValue: number; supplierValue: number; transactionDigest?: string; verifiedOnChain: boolean; source?: "full_acceptance" | "dispute" | "refund_unshipped" | "claim_uninspected" };
   disputeId?: string;
   /** The backend record, present for live orders only. */
   raw?: TradeOrder;

@@ -67,6 +67,8 @@ export type TradeOrder = {
     arbitratorAddress: string;
     verificationStatus: "verified_on_chain" | "external_reference";
     fundedAt: string;
+    deliveryDeadlineMs?: number;
+    inspectionWindowMs?: number;
   };
   undisputedRelease?: {
     transactionDigest: string;
@@ -78,8 +80,9 @@ export type TradeOrder = {
   documents?: Array<{
     id: string; kind: string; name: string; mimeType: string; sizeBytes: number; sha256: string; storagePath: string;
     uploadedBy: string; uploadedRole: "buyer" | "supplier"; uploadedAt: string; transcript?: string; extracted?: Record<string, unknown>;
+    anchor?: { transactionDigest: string; verificationStatus: "verified_on_chain" | "external_reference" };
   }>;
-  shipment?: { carrier: string; trackingNumber: string; dispatchedAt: string; expectedAt?: string; recordedBy: string };
+  shipment?: { carrier: string; trackingNumber: string; dispatchedAt: string; expectedAt?: string; recordedBy: string; transactionDigest?: string; verificationStatus?: "verified_on_chain" | "external_reference" };
   deliveryRecord?: { reference?: string; recordedBy: string; recordedAt: string };
   inspection?: TradeInspectionRecord;
   settlement?: {
@@ -88,7 +91,7 @@ export type TradeOrder = {
     transactionDigest?: string;
     receiptObjectId?: string;
     verifiedOnChain: boolean;
-    source?: "full_acceptance" | "dispute";
+    source?: "full_acceptance" | "dispute" | "refund_unshipped" | "claim_uninspected";
   };
   version: number;
   createdAt: string;

@@ -35,7 +35,7 @@ function AdvocateReport({ advocate, order, side }: { advocate: AdvocateCase; ord
     <div className="report">
       <p className="report-note"><Bot size={13} aria-hidden="true" /> An AI advocate argued this side from the submitted evidence and the policy. It is not a statement by {name}.</p>
       <Section number="1" title="Recommended split">
-        <div className="report-split"><span><small>Back to buyer</small><strong>{money(advocate.buyerValue)} SUI</strong></span><span><small>To supplier</small><strong>{money(advocate.supplierValue)} SUI</strong></span></div>
+        <div className="report-split"><span><small>Back to buyer</small><strong>{money(advocate.buyerValue)} {order.currency}</strong></span><span><small>To supplier</small><strong>{money(advocate.supplierValue)} {order.currency}</strong></span></div>
       </Section>
       <Section number="2" title="Issues that decide the dispute"><Bullets items={advocate.issues} /></Section>
       <Section number="3" title="Evidence relied on"><Quotes items={advocate.evidenceBasis} label={(item) => (item as QuotedEvidence).evidenceId} /></Section>
@@ -49,7 +49,7 @@ function AdvocateReport({ advocate, order, side }: { advocate: AdvocateCase; ord
   );
 }
 
-function MediatorReport({ mediator }: { mediator: MediatorCase }) {
+function MediatorReport({ mediator, currency }: { mediator: MediatorCase; currency: string }) {
   let n = 0;
   const next = () => String(++n);
   return (
@@ -75,7 +75,7 @@ function MediatorReport({ mediator }: { mediator: MediatorCase }) {
         <>
           <Section number={next()} title="Reasoning and arithmetic"><p>{mediator.reasoning}</p></Section>
           <Section number={next()} title="Determination">
-            <div className="report-split"><span><small>Back to buyer</small><strong>{money(mediator.buyerValue ?? 0)} SUI</strong></span><span><small>To supplier</small><strong>{money(mediator.supplierValue ?? 0)} SUI</strong></span>{mediator.evidenceSufficiency && <span><small>Evidence</small><strong className="capitalize">{mediator.evidenceSufficiency}</strong></span>}{mediator.legalRelevance && <span><small>Rule fit</small><strong className="capitalize">{mediator.legalRelevance}</strong></span>}</div>
+            <div className="report-split"><span><small>Back to buyer</small><strong>{money(mediator.buyerValue ?? 0)} {currency}</strong></span><span><small>To supplier</small><strong>{money(mediator.supplierValue ?? 0)} {currency}</strong></span>{mediator.evidenceSufficiency && <span><small>Evidence</small><strong className="capitalize">{mediator.evidenceSufficiency}</strong></span>}{mediator.legalRelevance && <span><small>Rule fit</small><strong className="capitalize">{mediator.legalRelevance}</strong></span>}</div>
           </Section>
         </>
       ) : (
@@ -109,12 +109,12 @@ export function MediationReportView({ run, order }: { run: ClaimMediation; order
           <p className="report-note"><Bot size={13} aria-hidden="true" /> Mediation run on {formatDateTime(run.createdAt)}: {report.debateRounds} {report.debateRounds === 1 ? "round" : "rounds"} of advocate argument, {run.modelCalls} model calls, then a neutral determination. Non-binding until both parties accept.</p>
           <Section number="1" title="Outcome">
             {report.mediator?.outcome === "proposal"
-              ? <div className="report-split"><span><small>Back to buyer</small><strong>{money(report.mediator.buyerValue ?? 0)} SUI</strong></span><span><small>To supplier</small><strong>{money(report.mediator.supplierValue ?? 0)} SUI</strong></span>{report.mediator.evidenceSufficiency && <span><small>Evidence</small><strong className="capitalize">{report.mediator.evidenceSufficiency}</strong></span>}</div>
+              ? <div className="report-split"><span><small>Back to buyer</small><strong>{money(report.mediator.buyerValue ?? 0)} {order.currency}</strong></span><span><small>To supplier</small><strong>{money(report.mediator.supplierValue ?? 0)} {order.currency}</strong></span>{report.mediator.evidenceSufficiency && <span><small>Evidence</small><strong className="capitalize">{report.mediator.evidenceSufficiency}</strong></span>}</div>
               : <p>No proposal. {report.mediator?.reason ?? run.reason}</p>}
           </Section>
           {report.buyer && report.supplier && (
             <Section number="2" title="What each side argued">
-              <div className="report-split"><span><small>{order.buyer}'s advocate</small><strong>{money(report.buyer.buyerValue)} SUI back to buyer</strong></span><span><small>{order.supplier}'s advocate</small><strong>{money(report.supplier.buyerValue)} SUI back to buyer</strong></span></div>
+              <div className="report-split"><span><small>{order.buyer}'s advocate</small><strong>{money(report.buyer.buyerValue)} {order.currency} back to buyer</strong></span><span><small>{order.supplier}'s advocate</small><strong>{money(report.supplier.buyerValue)} {order.currency} back to buyer</strong></span></div>
             </Section>
           )}
           {report.mediator && report.mediator.findings.length > 0 && (
@@ -128,7 +128,7 @@ export function MediationReportView({ run, order }: { run: ClaimMediation; order
       )}
       {tab === "buyer" && report.buyer && <AdvocateReport advocate={report.buyer} order={order} side="buyer" />}
       {tab === "supplier" && report.supplier && <AdvocateReport advocate={report.supplier} order={order} side="supplier" />}
-      {tab === "mediator" && report.mediator && <MediatorReport mediator={report.mediator} />}
+      {tab === "mediator" && report.mediator && <MediatorReport mediator={report.mediator} currency={order.currency} />}
     </div>
   );
 }

@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AgreementBlock, ConsentDialog, FileField, HelpHint, Notice } from "@/app/components/app-shell";
 import { ClaimSection } from "@/app/components/claim-section";
-import { ExtractionComparison, attachFile, buildDocument, extractPurchaseOrder, prepareEvidence } from "@/app/components/order-documents";
-import { type DemoOrder, type DocumentKind, type InspectionLine, type OrderDocument, type OrderShipment, claimOwner, formatDate, formatDateTime, formatOrderMoney as money } from "@/lib/demo-orders";
+import { type Anchor, ExtractionComparison, attachFile, buildDocument, extractPurchaseOrder, prepareEvidence } from "@/app/components/order-documents";
+import { type DemoOrder, type DocumentKind, type InspectionLine, type OrderDocument, type OrderShipment, claimOwner, formatDate, formatDateTime, formatOrderMoney as money, sha256Hex } from "@/lib/demo-orders";
 import { loadClaim, openDemoClaim } from "@/lib/dispute-actions";
 import { useEscrowActions } from "@/lib/escrow-actions";
 import { acceptLiveInvitation, acceptLiveInvite, cancelLiveInvite, markLiveDelivered, markLiveShipment, recordDemoAcceptance, recordDemoFunding, sendLiveInvite, tradeOrderToView, viewLiveOrder } from "@/lib/live-orders";
@@ -91,6 +91,8 @@ export function ActionPanel({ order, company, inviteToken, onChange, onInviteCon
       {order.status === "in_transit" && <TransitCard {...step} />}
       {order.status === "delivered" && order.role === "BUYER" && <InspectionFlow {...step} />}
       {order.status === "delivered" && order.role === "SUPPLIER" && order.deliveryRecord && <p className="action-note">Delivery was recorded on {formatDateTime(order.deliveryRecord.recordedAt)}{order.deliveryRecord.reference ? `, reference ${order.deliveryRecord.reference}` : ""}. The buyer checks the goods next.</p>}
+      {order.status === "funded" && order.role === "BUYER" && <DeadlineControls {...step} />}
+      {(order.status === "in_transit" || order.status === "delivered") && order.role === "SUPPLIER" && <DeadlineControls {...step} />}
       {(isDisputed(order.status) || (order.status === "settled" && order.disputeId)) && !order.claim && live && <LoadClaim order={order} onChange={onChange} />}
       {order.status === "settled" && <SettlementRecord order={order} />}
     </section>
@@ -194,7 +196,7 @@ function ConfirmControls({ order, company, live, inviteToken, busy, run, onInvit
       <AgreementBlock company={company} accepted={accepted} onChange={setAccepted}
         clauses={[
           `${company} confirms order ${order.reference} version ${order.version} as ${iAmBuyer ? "buyer" : "supplier"}. The confirmed terms are hashed into the Sui escrow when it is funded.`,
-          iAmBuyer ? `You fund ${money(order.value)} SUI into escrow next. Release follows the inspection result.` : `${order.buyer} funds ${money(order.value)} SUI into escrow. The accepted value is released to you when the buyer accepts the delivery.`,
+          iAmBuyer ? `You fund ${money(order.value)} ${order.currency} into escrow next. Release follows the inspection result.` : `${order.buyer} funds ${money(order.value)} ${order.currency} into escrow. The accepted value is released to you when the buyer accepts the delivery.`,
           "Any exception at delivery is handled under the Dispute Resolution Policy: the accepted value is released and only the disputed amount stays in escrow.",
         ]} />
       <div className="action-buttons">
@@ -230,24 +232,24 @@ function FundControls({ order, company, live, busy, run }: StepProps) {
     <div className="action-body">
       {order.confirmation && <div className="agreement agreement-done"><Check size={15} aria-hidden="true" /><span>Confirmed by <strong>{order.confirmation.organizationName || order.counterparty}</strong> on {formatDateTime(order.confirmation.confirmedAt)} under Terms of Service and Dispute Resolution Policy version {order.confirmation.termsVersion}.</span></div>}
       <dl className="fact-list">
-        <div><dt>Amount to secure</dt><dd><strong>{money(order.value)} SUI</strong></dd></div>
+        <div><dt>Amount to secure</dt><dd><strong>{money(order.value)} {order.currency}</strong></dd></div>
         <div><dt>Released to</dt><dd>{order.supplier}<small>{live ? short(payout) : "Verified payout address"}</small></dd></div>
         <div><dt>Signed by</dt><dd>{live ? (escrow.signingAddress ? short(escrow.signingAddress) : "No Sui address in this session") : "Your business wallet"}<small>{live && escrow.hasZkLogin ? "Google zkLogin address" : live ? "Connected wallet" : ""}</small></dd></div>
       </dl>
       <div className="action-buttons">
         <Button className="btn-primary" disabled={Boolean(busy)} onClick={() => setOpen(true)}>Fund escrow<ArrowRight size={14} aria-hidden="true" /></Button>
       </div>
-      <ConsentDialog open={open} onOpenChange={setOpen} company={company} title={`Fund ${money(order.value)} SUI into escrow`}
+      <ConsentDialog open={open} onOpenChange={setOpen} company={company} title={`Fund ${money(order.value)} ${order.currency} into escrow`}
         description="The amount moves from your Sui address into the escrow contract for this order. ProofPay cannot withdraw it."
         clauses={[
-          `${money(order.value)} SUI is locked for order ${order.reference} and released to ${order.supplier} only when you accept the delivery, or according to the claim outcome.`,
+          `${money(order.value)} ${order.currency} is locked for order ${order.reference} and released to ${order.supplier} only when you accept the delivery, or according to the claim outcome.`,
           "The confirmed order terms are hashed into the escrow so neither party can later dispute what was agreed.",
           "Release follows the inspection result and the Dispute Resolution Policy.",
         ]}
         confirmLabel={live ? "Sign and fund escrow" : "Fund escrow"} busy={busy === "fund"}
         onConfirm={async () => {
           if (await run("fund", async () => {
-            if (!live) return withStatus(order, "funded", `${order.buyer} secured ${money(order.value)} SUI in escrow.`);
+            if (!live) return withStatus(order, "funded", `${order.buyer} secured ${money(order.value)} ${order.currency} in escrow.`);
             if (!order.raw) throw new Error("Order data is missing.");
             return withExtras(await viewLiveOrder(await escrow.fundEscrow(order.raw)));
           }, "Escrow is funded. The supplier can ship now.")) setOpen(false);
@@ -256,7 +258,48 @@ function FundControls({ order, company, live, busy, run }: StepProps) {
   );
 }
 
+/** The buyer reclaims an unshipped escrow after the delivery deadline; the supplier claims an
+ *  uninspected one after the window. Both are contract paths that need no counterparty. */
+function DeadlineControls({ order, company, live, busy, run }: StepProps) {
+  const escrow = useEscrowActions();
+  const [open, setOpen] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 30_000); return () => window.clearInterval(timer); }, []);
+  const deadlines = order.deadlines;
+  const raw = order.raw;
+  if (!live || !deadlines || !raw) return null;
+  const buyer = order.role === "BUYER";
+  const at = buyer ? deadlines.deliveryDeadlineMs : deadlines.inspectionClosesAtMs;
+  const when = formatDateTime(new Date(at).toISOString());
+  const amount = `${money(order.value)} ${order.currency}`;
+  if (now <= at) {
+    return <p className="action-note">{buyer
+      ? `If ${order.supplier} has not marked shipment on Sui by ${when}, you can take the escrow back without anyone else's signature.`
+      : `If ${order.buyer} has neither accepted the delivery nor opened a claim by ${when}, you can claim the escrow without anyone else's signature.`}</p>;
+  }
+  return (
+    <div className="action-body">
+      <p className="action-note">{buyer
+        ? `The delivery deadline passed on ${when} without shipment. The escrow contract lets you reclaim ${amount}.`
+        : `The inspection window closed on ${when} without a decision. The escrow contract lets you claim ${amount}.`}</p>
+      <div className="action-buttons">
+        <Button className="btn-primary" disabled={Boolean(busy)} onClick={() => setOpen(true)}>{buyer ? "Reclaim the escrow" : "Claim the escrow"}<ArrowRight size={14} aria-hidden="true" /></Button>
+      </div>
+      <ConsentDialog open={open} onOpenChange={setOpen} company={company} title={buyer ? "Reclaim the escrow" : "Claim the escrow"}
+        description={buyer
+          ? `${amount} returns to your Sui address. The contract allows this only because the supplier never marked shipment before the deadline.`
+          : `${amount} is paid to your Sui address. The contract allows this only because the buyer recorded no decision inside the inspection window.`}
+        clauses={["The deadline written into the escrow at funding has passed.", "This closes the order and cannot be reversed."]}
+        confirmLabel={buyer ? "Sign and reclaim" : "Sign and claim"} busy={busy === "deadline"}
+        onConfirm={async () => {
+          if (await run("deadline", async () => withExtras(buyer ? await escrow.refundUnshipped(raw) : await escrow.claimUninspected(raw)), buyer ? "The escrow was returned to you." : "The escrow was paid to you.")) setOpen(false);
+        }} />
+    </div>
+  );
+}
+
 function ShipForm({ order, company, live, busy, run }: StepProps) {
+  const escrow = useEscrowActions();
   const [carrier, setCarrier] = useState(CARRIERS[0]);
   const [tracking, setTracking] = useState("");
   const [dispatchedAt, setDispatchedAt] = useState(() => new Date().toISOString().slice(0, 10));
@@ -280,25 +323,32 @@ function ShipForm({ order, company, live, busy, run }: StepProps) {
         <Button className="btn-primary" disabled={!valid || Boolean(busy)} onClick={() => setOpen(true)}><Truck size={14} aria-hidden="true" />Mark as shipped</Button>
       </div>
       <ConsentDialog open={open} onOpenChange={setOpen} company={company} title="Mark as shipped"
-        description={`${order.buyer} will see the carrier, tracking number and expected arrival. They record delivery when the goods arrive.`}
-        clauses={["The dispatch details and any attached evidence are genuine and unaltered.", "This update is recorded on the shared order and both parties see it."]}
-        confirmLabel="Mark as shipped" busy={busy === "ship"}
+        description={`${order.buyer} will see the carrier, tracking number and expected arrival. They record delivery when the goods arrive.${live ? " You sign one Sui transaction that marks shipment on the escrow and starts the inspection window." : ""}`}
+        clauses={["The dispatch details and any attached evidence are genuine and unaltered.", live ? "Shipment is recorded on the escrow contract, and the attached document's fingerprint is anchored in the same transaction." : "This update is recorded on the shared order and both parties see it."]}
+        confirmLabel={live ? "Sign and mark as shipped" : "Mark as shipped"} busy={busy === "ship"}
         onConfirm={async () => {
           if (await run("ship", async () => {
             let next: DemoOrder;
-            if (!live) next = shipSample(order, shipment);
-            else {
-              next = withExtras(await markLiveShipment(order.id, shipment));
+            if (!live) {
+              next = shipSample(order, shipment);
+              if (file) next = await attachFile(next, file, "dispatch_evidence", "SUPPLIER");
+              return next;
             }
-            if (file) next = await attachFile(next, file, "dispatch_evidence", "SUPPLIER");
+            if (!order.raw) throw new Error("Order data is missing.");
+            const fileHash = file ? await sha256Hex(file) : undefined;
+            const transactionDigest = order.raw.funding ? await escrow.markShipped(order.raw, fileHash) : undefined;
+            next = withExtras(await markLiveShipment(order.id, { ...shipment, transactionDigest }));
+            if (file) next = await attachFile(next, file, "dispatch_evidence", "SUPPLIER", { anchorTransactionDigest: transactionDigest });
             return next;
-          }, "The order is marked in transit.")) setOpen(false);
+          }, live ? "Shipment is signed on Sui. The order is in transit." : "The order is marked in transit.")) setOpen(false);
         }} />
     </div>
   );
 }
 
 function TransitCard({ order, company, live, busy, run }: StepProps) {
+  const escrow = useEscrowActions();
+  const anchor: Anchor | undefined = live && order.raw?.funding ? (sha256, kind) => escrow.anchorEvidence(order.raw!, kind, sha256) : undefined;
   const [open, setOpen] = useState(false);
   const [reference, setReference] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -327,7 +377,7 @@ function TransitCard({ order, company, live, busy, run }: StepProps) {
             else {
               next = withExtras(await markLiveDelivered(order.id, { reference: reference.trim() || undefined }));
             }
-            if (file) next = await attachFile(next, file, "delivery_evidence", order.role);
+            if (file) next = await attachFile(next, file, "delivery_evidence", order.role, {}, anchor);
             return next;
           }, buyer ? "Delivery recorded. Now check the goods." : "Delivery recorded. The buyer checks the goods next.")) setOpen(false);
         }}>
@@ -379,7 +429,11 @@ function InspectionFlow({ order, company, live, busy, run }: StepProps) {
   const openClaim = (demo: boolean) => run("claim", async () => {
     let base = order;
     let files;
-    if (file) { const evidence = await prepareEvidence(order, file, "BUYER"); base = evidence.order; files = [evidence.input]; }
+    if (file) {
+      const anchor: Anchor | undefined = live && order.raw?.funding ? (sha256, kind) => escrow.anchorEvidence(order.raw!, kind, sha256) : undefined;
+      const evidence = await prepareEvidence(order, file, "BUYER", anchor);
+      base = evidence.order; files = [evidence.input];
+    }
     let next: DemoOrder;
     if (!live) next = recordSampleInspection(base, lines, note.trim(), file ? 1 : 0);
     else {
@@ -412,7 +466,7 @@ function InspectionFlow({ order, company, live, busy, run }: StepProps) {
         <strong>Did everything arrive as ordered?</strong>
         <div className="choice-grid" role="radiogroup" aria-label="Inspection result">
           <button type="button" role="radio" aria-checked={choice === "intact"} className={choice === "intact" ? "choice choice-active" : "choice"} onClick={() => setChoice("intact")}>
-            <Check size={18} aria-hidden="true" /><span><strong>Yes, everything intact</strong><small>{money(order.value)} SUI is released to {order.supplier}.</small></span>
+            <Check size={18} aria-hidden="true" /><span><strong>Yes, everything intact</strong><small>{money(order.value)} {order.currency} is released to {order.supplier}.</small></span>
           </button>
           <button type="button" role="radio" aria-checked={choice === "exceptions"} className={choice === "exceptions" ? "choice choice-active choice-danger" : "choice"} onClick={() => setChoice("exceptions")}>
             <X size={18} aria-hidden="true" /><span><strong>Some items missing or damaged</strong><small>Record what was wrong and open a claim for that value.</small></span>
@@ -422,7 +476,7 @@ function InspectionFlow({ order, company, live, busy, run }: StepProps) {
 
       {choice === "intact" && (
         <div className="action-buttons">
-          <Button className="btn-primary" disabled={Boolean(busy)} onClick={() => setConfirmOpen(true)}>Accept delivery and release {money(order.value)} SUI</Button>
+          <Button className="btn-primary" disabled={Boolean(busy)} onClick={() => setConfirmOpen(true)}>Accept delivery and release {money(order.value)} {order.currency}</Button>
         </div>
       )}
 
@@ -435,20 +489,20 @@ function InspectionFlow({ order, company, live, busy, run }: StepProps) {
                 const entry = lines.find((candidate) => candidate.lineId === item.id)!;
                 return (
                   <tr key={item.id}>
-                    <td><strong>{item.description}</strong><small>{money(item.unitPrice)} SUI per {item.unit.replace(/s$/, "")}</small></td>
+                    <td><strong>{item.description}</strong><small>{money(item.unitPrice)} {order.currency} per {item.unit.replace(/s$/, "")}</small></td>
                     <td>{money(item.quantity)} {item.unit}</td>
                     <td><Input type="number" inputMode="numeric" min={0} max={item.quantity} aria-label={`Missing quantity for ${item.description}`} value={entry.missing} onChange={(event) => update(item.id, "missing", Number(event.target.value))} /></td>
                     <td><Input type="number" inputMode="numeric" min={0} max={item.quantity} aria-label={`Damaged quantity for ${item.description}`} value={entry.damaged} onChange={(event) => update(item.id, "damaged", Number(event.target.value))} /></td>
                     <td aria-label={`Accepted quantity for ${item.description}`}>{money(entry.accepted)} {item.unit}</td>
-                    <td className="num">{money((entry.missing + entry.damaged) * item.unitPrice)} SUI</td>
+                    <td className="num">{money((entry.missing + entry.damaged) * item.unitPrice)} {order.currency}</td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
           <div className="inspection-summary">
-            <div><span>Released to supplier</span><strong>{money(totals.accepted)} SUI</strong></div>
-            <div><span>Held for claim</span><strong>{money(totals.held)} SUI</strong></div>
+            <div><span>Released to supplier</span><strong>{money(totals.accepted)} {order.currency}</strong></div>
+            <div><span>Held for claim</span><strong>{money(totals.held)} {order.currency}</strong></div>
             <div><span>Rejected</span><strong>{totals.rejectedUnits} units</strong></div>
           </div>
           {totals.rejectedUnits === 0 && <p className="action-note">Enter the missing or damaged quantity on at least one line, or choose "Yes, everything intact".</p>}
@@ -457,11 +511,11 @@ function InspectionFlow({ order, company, live, busy, run }: StepProps) {
               <label className="field"><span>What was wrong<HelpHint text="This statement is sent to the supplier with the claim and quoted by the AI mediator. Say what arrived, in what condition, and how you know." /></span>
                 <textarea value={note} onChange={(event) => setNote(event.target.value)} rows={3} placeholder="13 cartons arrived crushed and leaking. The driver noted the damage on the signed delivery order." />
               </label>
-              <FileField label="Attach evidence" hint="Signed delivery order or photos. The file is read into text for the mediator. Only its fingerprint is kept with the order." accept=".pdf,.png,.jpg,.jpeg,.webp,.txt" onFile={setFile} file={file} />
+              <FileField label="Attach evidence" hint="Signed delivery order or photos. The file is read into text for the mediator. Its fingerprint is anchored to the escrow on Sui and kept with the order." accept=".pdf,.png,.jpg,.jpeg,.webp,.txt" onFile={setFile} file={file} />
               {note.trim().length < 10 && <p className="action-note">Describe what was wrong in at least 10 characters before you can open the claim. You have written {note.trim().length}.</p>}
               <div className="action-buttons">
                 {DEMO_CONTROLS && live && <Button variant="outline" disabled={!claimReady || Boolean(busy)} onClick={() => setDemoClaimOpen(true)}><FastForward size={14} aria-hidden="true" />Open claim without signing (demo)</Button>}
-                <Button className="btn-primary" disabled={!claimReady || Boolean(busy)} onClick={() => setConfirmOpen(true)}>Open claim for {money(totals.held)} SUI</Button>
+                <Button className="btn-primary" disabled={!claimReady || Boolean(busy)} onClick={() => setConfirmOpen(true)}>Open claim for {money(totals.held)} {order.currency}</Button>
               </div>
             </>
           )}
@@ -471,8 +525,8 @@ function InspectionFlow({ order, company, live, busy, run }: StepProps) {
       <ConsentDialog open={confirmOpen} onOpenChange={setConfirmOpen} company={company}
         title={choice === "intact" ? "Accept the delivery in full" : "Open a claim"}
         description={choice === "intact"
-          ? `${money(order.value)} SUI is released to ${order.supplier} from the escrow contract.${live ? " You sign one Sui transaction." : ""} This cannot be reversed.`
-          : `${money(totals.accepted)} SUI is released to ${order.supplier} now. ${money(totals.held)} SUI stays in escrow until the claim is settled.${live ? " You sign one Sui transaction." : ""}`}
+          ? `${money(order.value)} ${order.currency} is released to ${order.supplier} from the escrow contract.${live ? " You sign one Sui transaction." : ""} This cannot be reversed.`
+          : `${money(totals.accepted)} ${order.currency} is released to ${order.supplier} now. ${money(totals.held)} ${order.currency} stays in escrow until the claim is settled.${live ? " You sign one Sui transaction." : ""}`}
         clauses={choice === "intact"
           ? ["The quantities received match the order in full.", "The release is final and settles this order."]
           : ["The quantities entered are what your company actually received, and any evidence attached is genuine and unaltered.", "The accepted value is released to the supplier now. Only the held amount is disputed.", "The claim follows the Dispute Resolution Policy: supplier response, negotiation with optional AI mediation, then arbitration if no agreement is reached."]}
@@ -491,9 +545,12 @@ function SettlementRecord({ order }: { order: DemoOrder }) {
   return (
     <div className="action-body">
       <dl className="fact-list">
-        <div><dt>Paid to supplier</dt><dd><strong>{money(settlement?.supplierValue ?? order.value)} SUI</strong></dd></div>
-        <div><dt>Returned to buyer</dt><dd><strong>{money(settlement?.buyerValue ?? 0)} SUI</strong></dd></div>
-        <div><dt>How</dt><dd>{settlement?.source === "dispute" ? "Agreed under the claim and executed on Sui." : "Delivery accepted in full. The whole escrow was released to the supplier."}</dd></div>
+        <div><dt>Paid to supplier</dt><dd><strong>{money(settlement?.supplierValue ?? order.value)} {order.currency}</strong></dd></div>
+        <div><dt>Returned to buyer</dt><dd><strong>{money(settlement?.buyerValue ?? 0)} {order.currency}</strong></dd></div>
+        <div><dt>How</dt><dd>{settlement?.source === "dispute" ? "Agreed under the claim and executed on Sui."
+          : settlement?.source === "refund_unshipped" ? "The delivery deadline passed without shipment, so the buyer reclaimed the escrow."
+          : settlement?.source === "claim_uninspected" ? "The inspection window closed without a decision, so the supplier claimed the escrow."
+          : "Delivery accepted in full. The whole escrow was released to the supplier."}</dd></div>
         <div><dt>Sui transaction</dt><dd>{settlement?.transactionDigest && settlement.verifiedOnChain
           ? <a className="link" href={explorerTransactionUrl(settlement.transactionDigest)} target="_blank" rel="noreferrer">View on Suiscan<ExternalLink size={12} aria-hidden="true" /></a>
           : order.source === "sample" ? "Sample order, no on-chain record" : "Recorded without on-chain verification"}</dd></div>

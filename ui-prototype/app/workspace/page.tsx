@@ -10,7 +10,7 @@ import { suiDAppKit, SUI_TYPE } from "@/lib/sui-dapp-kit";
 import { useWorkspace } from "@/lib/use-workspace";
 import { AnimatedAmount, LiftCard } from "@/app/components/motion";
 
-type QueueItem = { key: string; href: string; reference: string; title: string; detail: string; counterparty: string; role: "BUYER" | "SUPPLIER"; value: number; status?: string; sample: boolean };
+type QueueItem = { key: string; href: string; reference: string; title: string; detail: string; counterparty: string; role: "BUYER" | "SUPPLIER"; value: number; currency: string; status?: string; sample: boolean };
 
 export default function OverviewPage() {
   const workspace = useWorkspace();
@@ -28,14 +28,14 @@ export default function OverviewPage() {
     const queue: QueueItem[] = workspace.invitations.map((invitation) => ({
       key: `invite-${invitation.orderId}`, href: `/orders/${encodeURIComponent(invitation.orderId)}`, reference: invitation.reference,
       title: "Review and confirm the order", detail: `${invitation.counterpartyName} invited you to ${invitation.invitedRole === "buyer" ? "buy" : "supply"} this order. Delivery ${invitation.deliveryDate}.`,
-      counterparty: invitation.counterpartyName, role: invitation.invitedRole === "buyer" ? "BUYER" : "SUPPLIER", value: invitation.value, status: invitation.invitedRole === "buyer" ? "awaiting_buyer" : "awaiting_supplier", sample: false,
+      counterparty: invitation.counterpartyName, role: invitation.invitedRole === "buyer" ? "BUYER" : "SUPPLIER", value: invitation.value, currency: invitation.currency, status: invitation.invitedRole === "buyer" ? "awaiting_buyer" : "awaiting_supplier", sample: false,
     }));
     const waiting: QueueItem[] = [];
     const isOpen = (order: DemoOrder) => !["settled", "cancelled"].includes(order.status);
     for (const order of workspace.orders) {
       if (!isOpen(order)) continue;
       const action = nextAction(order.status, order.role, { invited: order.source === "backend" ? Boolean(order.invited) : true, claimOwner: claimOwner(order.claim) });
-      const item: QueueItem = { key: order.id, href: `/orders/${encodeURIComponent(order.id)}`, reference: order.reference, title: action.title, detail: action.detail, counterparty: order.counterparty, role: order.role, value: order.value, status: order.status, sample: order.source === "sample" };
+      const item: QueueItem = { key: order.id, href: `/orders/${encodeURIComponent(order.id)}`, reference: order.reference, title: action.title, detail: action.detail, counterparty: order.counterparty, role: order.role, value: order.value, currency: order.currency, status: order.status, sample: order.source === "sample" };
       if (action.owner === "you" && !queue.some((entry) => entry.href === item.href)) queue.push(item);
       else if (action.owner !== "you") waiting.push(item);
     }
@@ -106,7 +106,7 @@ export default function OverviewPage() {
                   <span>{item.reference} with {item.counterparty}. {item.detail}</span>
                 </div>
                 <div className="queue-side">
-                  <strong>{money(item.value)} SUI</strong>
+                  <strong>{money(item.value)} {item.currency}</strong>
                   <a className="btn btn-primary" href={item.href}>Open order<ArrowRight size={14} aria-hidden="true" /></a>
                 </div>
               </li>
@@ -124,7 +124,7 @@ export default function OverviewPage() {
                 <a className="row-link" href={item.href}><strong>{item.reference}</strong></a>
                 <span>{item.title}</span>
                 {item.status && <StatusPill status={item.status} />}
-                <span className="num">{money(item.value)} SUI</span>
+                <span className="num">{money(item.value)} {item.currency}</span>
               </li>
             ))}
           </ul>

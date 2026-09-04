@@ -6,13 +6,13 @@ import { STATUS, type OrderStatus } from "@/lib/order-status";
 import { DEFAULT_ARBITRATOR_ADDRESS, SUI_TYPE, TESTNET_USDC_TYPE } from "@/lib/sui-dapp-kit";
 
 /** Orders carry their own coin type, so scale and label follow the order rather than a global constant.
- *  Orders created before the move to SUI still hold the USDC type and six decimal amounts. */
+ *  New orders settle in Circle's testnet USDC; orders created while SUI was the default keep the SUI type. */
 type AssetLabel = "Testnet SUI" | "Testnet USDC";
 const ASSETS: Record<string, { decimals: number; symbol: string; label: AssetLabel }> = {
   [SUI_TYPE]: { decimals: 9, symbol: "SUI", label: "Testnet SUI" },
   [TESTNET_USDC_TYPE]: { decimals: 6, symbol: "USDC", label: "Testnet USDC" },
 };
-const DEFAULT_ASSET = ASSETS[SUI_TYPE];
+const DEFAULT_ASSET = ASSETS[TESTNET_USDC_TYPE];
 
 const assetOf = (assetType?: string) => (assetType && ASSETS[assetType]) || DEFAULT_ASSET;
 export const assetSymbol = (assetType?: string) => assetOf(assetType).symbol;
@@ -56,9 +56,12 @@ function liveEvents(order: TradeOrder): OrderEvent[] {
   else if (step >= 4) events.push({ at: order.updatedAt, label: "Delivered", detail: "Delivery was recorded." });
   for (const document of order.documents ?? []) events.push({ at: document.uploadedAt, label: "Document attached", detail: `${document.name}, by ${document.uploadedRole === "buyer" ? order.buyerName || "the buyer" : order.supplierName}.` });
   if (order.inspection) events.push({ at: order.inspection.recordedAt, label: "Inspection recorded", detail: order.inspection.note || "Quantities were recorded for every line." });
-  if (order.disputeId) events.push({ at: order.updatedAt, label: "Claim opened", detail: "The buyer reported exceptions. The disputed amount is held." });
-  if (order.undisputedRelease) events.push({ at: order.undisputedRelease.releasedAt, label: "Undisputed amount released", detail: "The accepted value was released to the supplier." });
-  if (order.settlement) events.push({ at: order.updatedAt, label: "Settled", detail: order.settlement.source === "full_acceptance" ? "Delivery accepted in full. The whole escrow was released to the supplier." : order.settlement.verifiedOnChain ? "Settlement verified on Sui." : "Settlement recorded." });
+  if (order.disputeId) events.push({ at: order.updatedAt, label: "Claim opened", detail: "The buyer reported exceptions. Only the disputed amount stays held." });
+  if (order.undisputedRelease) events.push({ at: order.undisputedRelease.releasedAt, label: "Accepted value released", detail: "The claim transaction paid the accepted value to the supplier." });
+  if (order.settlement) events.push({ at: order.updatedAt, label: "Settled", detail: order.settlement.source === "full_acceptance" ? "Delivery accepted in full. The whole escrow was released to the supplier."
+    : order.settlement.source === "refund_unshipped" ? "The delivery deadline passed without shipment. The escrow was returned to the buyer."
+    : order.settlement.source === "claim_uninspected" ? "The inspection window closed without a decision. The escrow was released to the supplier."
+    : order.settlement.verifiedOnChain ? "Settlement verified on Sui." : "Settlement recorded." });
   return events;
 }
 
@@ -95,19 +98,22 @@ export function tradeOrderToView(order: TradeOrder, profile?: WorkspaceProfile):
     item: itemSummary(items, order.description),
     items, status, value: fromUnits(order.amountUnits, order.assetType),
     delivery: order.deliveryDate, deliveryLocation: order.deliveryLocation,
-    settlementAsset: assetLabel(order.assetType),
+    settlementAsset: assetLabel(order.assetType), currency: assetSymbol(order.assetType),
     version: order.version, inviteToken: undefined,
     source: "backend",
     documents: documentsOf(order),
     confirmation: order.confirmation,
-    shipment: order.shipment ? { carrier: order.shipment.carrier, trackingNumber: order.shipment.trackingNumber, dispatchedAt: order.shipment.dispatchedAt, expectedAt: order.shipment.expectedAt } : undefined,
+    shipment: order.shipment ? { carrier: order.shipment.carrier, trackingNumber: order.shipment.trackingNumber, dispatchedAt: order.shipment.dispatchedAt, expectedAt: order.shipment.expectedAt, transactionDigest: order.shipment.transactionDigest, verifiedOnChain: order.shipment.verificationStatus === "verified_on_chain" } : undefined,
+    deadlines: order.funding?.deliveryDeadlineMs !== undefined && order.funding.inspectionWindowMs !== undefined
+      ? { deliveryDeadlineMs: order.funding.deliveryDeadlineMs, inspectionClosesAtMs: Math.max(order.funding.deliveryDeadlineMs, order.shipment ? Date.parse(order.shipment.dispatchedAt) || 0 : 0) + order.funding.inspectionWindowMs }
+      : undefined,
     deliveryRecord: order.deliveryRecord ? { recordedAt: order.deliveryRecord.recordedAt, recordedBy: order.deliveryRecord.recordedBy === order.buyerId ? "BUYER" : "SUPPLIER", reference: order.deliveryRecord.reference } : undefined,
     inspection: inspectionFromOrder(order),
     events: liveEvents(order),
     funding: order.funding,
     disputeId: order.disputeId,
     settlement: order.settlement ? {
-      buyerValue: fromUnits(order.settlement.buyerUnits), supplierValue: fromUnits(order.settlement.supplierUnits),
+      buyerValue: fromUnits(order.settlement.buyerUnits, order.assetType), supplierValue: fromUnits(order.settlement.supplierUnits, order.assetType),
       transactionDigest: order.settlement.transactionDigest, verifiedOnChain: order.settlement.verifiedOnChain, source: order.settlement.source,
     } : undefined,
     raw: order,
@@ -143,12 +149,12 @@ export async function createLiveOrder(input: CreateLiveOrderInput): Promise<{ or
     body: JSON.stringify({
       reference: input.reference.trim() || `PO-${Date.now().toString().slice(-8)}`,
       initiatorRole: input.initiatorRole, ...counterparty,
-      arbitratorId: DEFAULT_ARBITRATOR_ID, arbitratorWalletAddress: DEFAULT_ARBITRATOR_ADDRESS, assetType: SUI_TYPE, amountUnits: toUnits(amount),
+      arbitratorId: DEFAULT_ARBITRATOR_ID, arbitratorWalletAddress: DEFAULT_ARBITRATOR_ADDRESS, assetType: TESTNET_USDC_TYPE, amountUnits: toUnits(amount, TESTNET_USDC_TYPE),
       description: input.items.map((item) => item.description).join("; "),
       deliveryDate: input.deliveryDate, deliveryLocation: input.deliveryLocation,
       lineItems: input.items.map((item) => ({
         id: item.id, description: item.description, quantity: String(item.quantity), unit: item.unit,
-        unitPriceUnits: toUnits(item.unitPrice),
+        unitPriceUnits: toUnits(item.unitPrice, TESTNET_USDC_TYPE),
       })),
     }),
   });
@@ -186,6 +192,7 @@ export type LiveInvitation = {
   invitedRole: "buyer" | "supplier";
   invitedEmail: string;
   value: number;
+  currency: string;
   deliveryDate: string;
   expiresAt: string;
 };
@@ -195,7 +202,7 @@ export async function loadInvitations(): Promise<LiveInvitation[]> {
   return invitations.map((invitation) => ({
     orderId: invitation.orderId, reference: invitation.reference, counterpartyName: invitation.counterpartyName ?? invitation.buyerName,
     invitedRole: invitation.invitedRole ?? "supplier",
-    invitedEmail: invitation.invitedEmail, value: fromUnits(invitation.amountUnits),
+    invitedEmail: invitation.invitedEmail, value: fromUnits(invitation.amountUnits, invitation.assetType), currency: assetSymbol(invitation.assetType),
     deliveryDate: invitation.deliveryDate, expiresAt: invitation.expiresAt,
   }));
 }
@@ -223,8 +230,15 @@ export async function previewLiveInvite(token: string): Promise<DemoOrder> {
   return withProfile(apiRequest<TradeOrder>(`/v1/invites/${encodeURIComponent(token)}`));
 }
 
-export async function markLiveShipment(id: string, shipment?: { carrier: string; trackingNumber: string; dispatchedAt: string; expectedAt?: string }): Promise<DemoOrder> {
+export async function markLiveShipment(id: string, shipment?: { carrier: string; trackingNumber: string; dispatchedAt: string; expectedAt?: string; transactionDigest?: string }): Promise<DemoOrder> {
   return withProfile(apiRequest<TradeOrder>(`/v1/orders/${encodeURIComponent(id)}/shipment`, { method: "POST", body: JSON.stringify(shipment ?? {}) }));
+}
+
+export type DeadlineSettlementInput = { kind: "refund_unshipped" | "claim_uninspected"; transactionDigest: string; receiptObjectId?: string };
+
+/** Records a refund_unshipped or claim_uninspected transaction against the order. */
+export async function settleLiveDeadline(id: string, input: DeadlineSettlementInput): Promise<DemoOrder> {
+  return withProfile(apiRequest<TradeOrder>(`/v1/orders/${encodeURIComponent(id)}/deadline-settlement`, { method: "POST", body: JSON.stringify(input) }));
 }
 
 export async function markLiveDelivered(id: string, record?: { reference?: string }): Promise<DemoOrder> {
@@ -262,7 +276,7 @@ export async function recordDemoFunding(order: DemoOrder): Promise<DemoOrder> {
   return withProfile(apiRequest<TradeOrder>(`/v1/orders/${encodeURIComponent(order.id)}/funding`, {
     method: "POST",
     body: JSON.stringify({
-      packageId: process.env.NEXT_PUBLIC_PAYPROOF_PACKAGE_ID?.trim() || "0x4e1f7a3e99809622e2adbc379967eae7d7c26375378558594528810deddd6535",
+      packageId: process.env.NEXT_PUBLIC_PAYPROOF_PACKAGE_ID?.trim() || "0x132dda3d655724c5a667a4454baef3db3f6529ecf42ddb65132e1d9d14fd6f30",
       escrowObjectId: placeholderId("0x"), transactionDigest: `demo-${Date.now()}`,
       buyerAddress: session?.suiAddress || placeholderId("0x"), supplierAddress: raw.supplierWalletAddress || placeholderId("0x"),
       arbitratorAddress: raw.arbitratorWalletAddress || DEFAULT_ARBITRATOR_ADDRESS,
@@ -271,13 +285,14 @@ export async function recordDemoFunding(order: DemoOrder): Promise<DemoOrder> {
 }
 
 /** Uploads a file to the order's document store and returns the refreshed order. */
-export async function uploadOrderDocument(orderId: string, file: File, kind: DocumentKind, extras: { transcript?: string; extracted?: ExtractedPurchaseOrder } = {}): Promise<DemoOrder> {
+export async function uploadOrderDocument(orderId: string, file: File, kind: DocumentKind, extras: { transcript?: string; extracted?: ExtractedPurchaseOrder; anchorTransactionDigest?: string } = {}): Promise<DemoOrder> {
   const session = loadSession();
   const form = new FormData();
   form.append("file", file, file.name);
   form.append("kind", kind);
   if (extras.transcript) form.append("transcript", extras.transcript);
   if (extras.extracted) form.append("extracted", JSON.stringify(extras.extracted));
+  if (extras.anchorTransactionDigest) form.append("anchorTransactionDigest", extras.anchorTransactionDigest);
   const response = await fetch(`${backendUrl()}/v1/orders/${encodeURIComponent(orderId)}/documents`, { method: "POST", headers: session?.accessToken ? { authorization: `Bearer ${session.accessToken}` } : undefined, body: form });
   if (!response.ok) {
     const payload = await response.json().catch(() => ({})) as { message?: string; error?: string };

@@ -118,7 +118,7 @@ export default function OrderPage() {
             <h1>{order.reference}</h1>
             <p>{order.item}. {money(quantity)} units across {order.items.length} {order.items.length === 1 ? "line" : "lines"}. {meta.summary}</p>
           </div>
-          <div className="order-head-total"><span>Order value</span><strong><AnimatedAmount value={order.value} /> <small>SUI</small></strong></div>
+          <div className="order-head-total"><span>Order value</span><strong><AnimatedAmount value={order.value} /> <small>{order.currency}</small></strong></div>
         </div>
         <dl className="fact-strip">
           <div><dt>Buyer</dt><dd><strong>{order.buyer}</strong>{order.raw?.buyerEmail && <small>{order.raw.buyerEmail}</small>}</dd></div>
@@ -153,12 +153,12 @@ export default function OrderPage() {
                     <tr key={item.id}>
                       <td><strong>{item.description}</strong></td>
                       <td>{money(item.quantity)} {item.unit}</td>
-                      <td>{money(item.unitPrice)} SUI</td>
-                      <td className="num"><strong>{money(item.quantity * item.unitPrice)} SUI</strong></td>
+                      <td>{money(item.unitPrice)} {order.currency}</td>
+                      <td className="num"><strong>{money(item.quantity * item.unitPrice)} {order.currency}</strong></td>
                     </tr>
                   ))}
                 </tbody>
-                <tfoot><tr><td colSpan={3}>Total in Testnet SUI</td><td className="num"><strong>{money(order.value)} SUI</strong></td></tr></tfoot>
+                <tfoot><tr><td colSpan={3}>Total in {order.settlementAsset}</td><td className="num"><strong>{money(order.value)} {order.currency}</strong></td></tr></tfoot>
               </table>
               {order.inspection && !isDisputed(order.status) && (
                 <div className="inspection-record">

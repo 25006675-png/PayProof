@@ -32,14 +32,20 @@ Disputed order:    client wallet --PTBs--> shared Escrow<T>
 
 Move transaction atomicity means an abort rolls back every step. The module never holds funds and has no admin withdrawal path.
 
-The `payproof::escrow` module is a separate stateful contract family in the same
-version-2 deployment. `create<T>` shares an escrow with buyer, supplier, and
-designated arbitrator identities plus the private order commitment. The buyer
-can freeze only a disputed amount; `release_undisputed<T>` pays the supplier the
-remaining balance. Parties approve an exact buyer-refund/supplier-release split,
-or the arbitrator approves one when escalation has occurred. `execute_settlement`
-conserves the disputed balance, deletes the escrow, pays both destinations, and
-shares an immutable `SettlementReceipt<T>`. The backend never signs or holds
+The `payproof::escrow` module is a separate stateful contract family, published
+fresh as v3 because its struct gained deadline fields. `create<T>` shares an
+escrow with buyer, supplier, and designated arbitrator identities, the private
+order commitment, a delivery deadline, and an inspection window. The supplier
+records dispatch with `mark_shipped<T>`, and either party binds a document hash
+with `anchor_evidence<T>`. The buyer's `open_dispute<T>` freezes only the disputed
+amount and pays the remainder to the supplier in the same transaction. Parties
+approve an exact buyer-refund/supplier-release split, or the arbitrator approves
+one when escalation has occurred, and `execute_settlement` conserves the disputed
+balance, deletes the escrow, pays both destinations, and shares an immutable
+`SettlementReceipt<T>`. Two paths need no counterparty: `refund_unshipped<T>`
+returns the escrow to the buyer once the delivery deadline passes with no
+shipment, and `claim_uninspected<T>` pays the supplier once the inspection
+window closes with neither acceptance nor dispute. The backend never signs or holds
 these funds; its gRPC verifier re-reads the funding, dispute, settlement, and
 receipt effects before marking an off-chain agreement settled.
 
