@@ -53,6 +53,43 @@ export type ClaimInput = {
   inspection?: { lines: InspectionLine[]; note?: string };
 };
 
+/** A payment request as encoded in a merchant's QR code. */
+export type PaymentRequest = {
+  v: 1;
+  network: "sui:testnet";
+  to: string;
+  merchant: string;
+  amount: string;
+  currency: string;
+  coinType: string;
+  reference: string;
+  session: string;
+};
+
+const SUI_ADDRESS = /^0x[0-9a-fA-F]{64}$/;
+
+/** Parses the text behind a payment QR and rejects anything that is not a well-formed request. */
+export function parsePaymentRequest(text: string): PaymentRequest {
+  let raw: Partial<PaymentRequest>;
+  try { raw = JSON.parse(text.trim()) as Partial<PaymentRequest>; } catch { throw new Error("That is not a PayProof payment request."); }
+  if (raw.v !== 1 || raw.network !== "sui:testnet") throw new Error("This payment request is for a different network or version.");
+  if (typeof raw.to !== "string" || !SUI_ADDRESS.test(raw.to)) throw new Error("The payment request has no valid recipient address.");
+  const amount = Number(raw.amount);
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error("The payment request has no valid amount.");
+  if (typeof raw.coinType !== "string" || !raw.coinType.includes("::")) throw new Error("The payment request has no valid coin type.");
+  const reference = String(raw.reference ?? "").trim();
+  if (!reference || new TextEncoder().encode(reference).length > 128) throw new Error("The payment reference must be between 1 and 128 bytes.");
+  return {
+    v: 1, network: "sui:testnet", to: raw.to, merchant: String(raw.merchant ?? "").slice(0, 120), amount: String(raw.amount), currency: String(raw.currency ?? ""),
+    coinType: raw.coinType, reference, session: String(raw.session ?? "").slice(0, 64),
+  };
+}
+
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 /**
  * Every escrow action that needs a Sui signature. Uses the zkLogin session
  * when present, otherwise the connected wallet.
@@ -318,5 +355,26 @@ export function useEscrowActions() {
     return confirmClaimExecution(disputeId, { transactionDigest: digest, packageId: ESCROW_PACKAGE_ID, escrowObjectId: order.funding.escrowObjectId, receiptObjectId: receipt });
   }
 
-  return { signingAddress, hasZkLogin: Boolean(zkSession), fundEscrow, markShipped, anchorEvidence, acceptDelivery, openClaim, refundUnshipped, claimUninspected, approveSettlement, executeSettlement };
+  /** Pays a merchant's request directly, outside any escrow, and keeps an on-chain receipt bound to
+   *  the request's hash. The merchant can recompute the hash from the same request to match it. */
+  async function payRequest(request: PaymentRequest): Promise<{ digest: string; receiptObjectId?: string; requestHash: string }> {
+    requireSigner("Sign in with Google or connect a Sui wallet before paying.");
+    if (request.to.toLowerCase() === signingAddress?.toLowerCase()) throw new Error("This request is addressed to your own wallet.");
+    const canonical = JSON.stringify({ v: request.v, network: request.network, to: request.to, merchant: request.merchant, amount: request.amount, currency: request.currency, coinType: request.coinType, reference: request.reference, session: request.session });
+    const requestHash = await sha256Hex(canonical);
+    const units = toUnits(Number(request.amount), request.coinType);
+    if (BigInt(units) <= 0n) throw new Error("The amount is below the smallest unit of this coin.");
+    const tx = new Transaction();
+    const payment = tx.coin({ balance: BigInt(units), type: request.coinType, useGasCoin: false });
+    tx.moveCall({
+      target: `${ESCROW_PACKAGE_ID}::payproof::pay`, typeArguments: [request.coinType],
+      arguments: [payment, tx.pure.address(request.to), tx.pure.vector("u8", hexBytes(requestHash, "The request hash")), tx.pure.string(request.reference), tx.object.clock()],
+    });
+    const { digest, indexed } = await signed(tx, "The payment failed.");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const receipt = (indexed.Transaction?.effects?.changedObjects ?? []).find((change: any) => change.idOperation === "Created" && String(change.objectType ?? "").includes("::payproof::PaymentReceipt"));
+    return { digest, receiptObjectId: receipt?.objectId ? String(receipt.objectId) : undefined, requestHash };
+  }
+
+  return { signingAddress, hasZkLogin: Boolean(zkSession), fundEscrow, markShipped, anchorEvidence, acceptDelivery, openClaim, refundUnshipped, claimUninspected, approveSettlement, executeSettlement, payRequest };
 }

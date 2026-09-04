@@ -27,7 +27,11 @@ export class EnokiSponsor {
     packageId: string,
     private readonly baseUrl = "https://api.enoki.mystenlabs.com/v1",
   ) {
-    this.allowedMoveCallTargets = ESCROW_ENTRY_FUNCTIONS.map((name) => `${packageId}::escrow::${name}`);
+    this.allowedMoveCallTargets = [
+      ...ESCROW_ENTRY_FUNCTIONS.map((name) => `${packageId}::escrow::${name}`),
+      // Direct payment with an on-chain receipt, used by the wallet's pay-by-QR flow.
+      `${packageId}::payproof::pay`,
+    ];
   }
 
   private async call<T>(path: string, body: unknown): Promise<T> {

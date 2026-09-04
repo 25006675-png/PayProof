@@ -2,18 +2,33 @@
 
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { ArrowDownLeft, ArrowRight, ArrowUpRight, Bitcoin, Check, ClipboardCopy, Clock3, CreditCard, Landmark, LockKeyhole, Plus, QrCode, RefreshCw, ShieldCheck } from "lucide-react";
+import { ArrowDownLeft, ArrowRight, ArrowUpRight, Bitcoin, Camera, Check, ClipboardCopy, Clock3, CreditCard, ExternalLink, Landmark, LockKeyhole, Plus, QrCode, RefreshCw, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { AppShell, HelpHint, Notice, PageTitle } from "@/app/components/app-shell";
-import { formatOrderMoney as money } from "@/lib/demo-orders";
-import { suiDAppKit, SUI_TYPE } from "@/lib/sui-dapp-kit";
+import { type DemoOrder, formatOrderMoney as money } from "@/lib/demo-orders";
+import { type PaymentRequest, parsePaymentRequest, useEscrowActions } from "@/lib/escrow-actions";
+import { explorerTransactionUrl, suiDAppKit, SUI_TYPE, TESTNET_USDC_TYPE } from "@/lib/sui-dapp-kit";
 import { useWorkspace } from "@/lib/use-workspace";
 import { AnimatedAmount, LiftCard } from "@/app/components/motion";
 
-type Movement = { id: string; type: "in" | "out"; title: string; detail: string; amount: number; at: string; state: "pending" | "complete" };
+type Movement = { id: string; type: "in" | "out"; title: string; detail: string; amount: number; currency?: string; at: string; state: "pending" | "complete"; transactionDigest?: string };
 type Method = "card" | "bank" | "crypto";
+type Balances = { usdc: number; sui: number };
+
+const COINS: Record<string, { symbol: string; type: string; decimals: number }> = {
+  USDC: { symbol: "USDC", type: TESTNET_USDC_TYPE, decimals: 6 },
+  SUI: { symbol: "SUI", type: SUI_TYPE, decimals: 9 },
+};
+
+/** Sums order values per currency, so a legacy SUI order never adds to a USDC total. */
+function sumByCurrency(orders: DemoOrder[], pick: (order: DemoOrder) => number = (order) => order.value): string {
+  const totals = new Map<string, number>();
+  for (const order of orders) totals.set(order.currency, (totals.get(order.currency) ?? 0) + pick(order));
+  if (totals.size === 0) return "0 USDC";
+  return Array.from(totals, ([currency, value]) => `${money(value)} ${currency}`).join(", ");
+}
 
 const MOVEMENTS_KEY = "payproof_wallet_movements";
 const BANKS = ["Maybank", "CIMB Bank", "Public Bank", "RHB Bank", "Hong Leong Bank", "AmBank", "Bank Islam", "OCBC Malaysia"];
@@ -27,7 +42,7 @@ function saveMovements(accountKey: string, movements: Movement[]) {
 
 export default function WalletPage() {
   const workspace = useWorkspace();
-  const [balance, setBalance] = useState<number | null>(null);
+  const [balances, setBalances] = useState<Balances | null>(null);
   const [balanceNote, setBalanceNote] = useState("");
   const [movements, setMovements] = useState<Movement[]>([]);
   const [topUpOpen, setTopUpOpen] = useState(false);
@@ -35,35 +50,41 @@ export default function WalletPage() {
   const [qrOpen, setQrOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const address = workspace.session?.suiAddress ?? "";
+  const balance = balances?.sui ?? null;
 
-  const readBalance = useCallback(async () => {
+  const readBalances = useCallback(async (): Promise<Balances | null> => {
     if (!address) return null;
-    const result = await suiDAppKit.getClient("testnet").getBalance({ owner: address, coinType: SUI_TYPE });
-    return Number(result.balance.balance) / 1_000_000_000;
+    const client = suiDAppKit.getClient("testnet");
+    const [usdc, sui] = await Promise.all([
+      client.getBalance({ owner: address, coinType: TESTNET_USDC_TYPE }),
+      client.getBalance({ owner: address, coinType: SUI_TYPE }),
+    ]);
+    return { usdc: Number(usdc.balance.balance) / 1_000_000, sui: Number(sui.balance.balance) / 1_000_000_000 };
   }, [address]);
+
+  const refreshBalances = useCallback(() => readBalances()
+    .then((value) => { setBalances(value); setBalanceNote("Balances read from Sui Testnet."); })
+    .catch((cause) => setBalanceNote(cause instanceof Error ? `The balance could not be read: ${cause.message}` : "The balance could not be read.")), [readBalances]);
 
   useEffect(() => {
     if (!workspace.ready) return;
     setMovements(loadMovements(workspace.accountKey));
-    if (!address) { setBalance(null); setBalanceNote(workspace.live ? "Sign in with Google zkLogin or connect a Sui wallet to load the on-chain balance." : "Sign in to load your balance."); return; }
-    readBalance()
-      .then((value) => { setBalance(value); setBalanceNote("Balance read from Sui Testnet."); })
-      .catch((cause) => setBalanceNote(cause instanceof Error ? `The balance could not be read: ${cause.message}` : "The balance could not be read."));
-  }, [workspace.ready, workspace.accountKey, workspace.live, address, readBalance]);
+    if (!address) { setBalances(null); setBalanceNote(workspace.live ? "Sign in with Google zkLogin or connect a Sui wallet to load the on-chain balance." : "Sign in to load your balance."); return; }
+    void refreshBalances();
+  }, [workspace.ready, workspace.accountKey, workspace.live, address, refreshBalances]);
 
   /** Asks the Sui testnet faucet for SUI and waits for the coin to become visible, returning what arrived. */
   const requestFaucet = async () => {
-    const before = (await readBalance()) ?? 0;
+    const before = (await readBalances())?.sui ?? 0;
     const response = await fetch("/api/faucet", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ address }) });
     const payload = (await response.json()) as { error?: string };
     if (!response.ok) throw new Error(payload.error ?? "The faucet did not respond.");
     let after = before;
     for (let attempt = 0; attempt < 12 && after <= before; attempt += 1) {
       await new Promise((resolve) => window.setTimeout(resolve, 1200));
-      after = (await readBalance().catch(() => before)) ?? before;
+      after = (await readBalances().catch(() => null))?.sui ?? before;
     }
-    setBalance(after);
-    setBalanceNote("Balance read from Sui Testnet.");
+    await refreshBalances();
     return Math.max(0, after - before);
   };
 
@@ -75,9 +96,9 @@ export default function WalletPage() {
     const pendingIn = movements.filter((item) => item.state === "pending" && item.type === "in").reduce((sum, item) => sum + item.amount, 0);
     const pendingOut = movements.filter((item) => item.state === "pending" && item.type === "out").reduce((sum, item) => sum + item.amount, 0);
     return {
-      buying: { value: buying.reduce((sum, order) => sum + order.value, 0), count: buying.length },
-      supplying: { value: supplying.reduce((sum, order) => sum + order.value, 0), count: supplying.length },
-      held: { value: held.reduce((sum, order) => sum + (order.inspection?.heldValue ?? 0), 0), count: held.length },
+      buying: { value: sumByCurrency(buying), count: buying.length },
+      supplying: { value: sumByCurrency(supplying), count: supplying.length },
+      held: { value: sumByCurrency(held, (order) => order.inspection?.heldValue ?? 0), count: held.length },
       pendingIn, pendingOut,
     };
   }, [workspace.orders, movements]);
@@ -96,28 +117,29 @@ export default function WalletPage() {
       <section className="wallet-grid">
         <LiftCard as="article" className="wallet-card" tilt={2} lift={2}>
           <div className="wallet-card-head">
-            <span>Available balance<HelpHint text="SUI held at your Sui address. Escrowed funds are not included because the escrow contract holds them, not your address." /></span>
+            <span>Available balance<HelpHint text="USDC and SUI held at your Sui address. Escrowed funds are not included because the escrow contract holds them, not your address." /></span>
             <span className="wallet-network"><i aria-hidden="true" />Sui Testnet</span>
           </div>
-          <strong className="wallet-amount">{balance === null ? <span className="wallet-amount-text">Not connected</span> : <><AnimatedAmount value={balance} decimals={2} /> <small>SUI</small></>}</strong>
+          <strong className="wallet-amount">{balances === null ? <span className="wallet-amount-text">Not connected</span> : <><AnimatedAmount value={balances.usdc} decimals={2} /> <small>USDC</small></>}</strong>
+          {balances !== null && <p className="wallet-note">{money(balances.sui)} SUI also held. Gas is sponsored, so SUI is only needed for orders that were created in SUI.</p>}
           <p className="wallet-address">{address ? <><code>{address.slice(0, 10)}...{address.slice(-8)}</code><button type="button" className="text-button text-button-light" onClick={() => void navigator.clipboard.writeText(address)}><ClipboardCopy size={12} aria-hidden="true" />Copy address</button></> : balanceNote}</p>
           {address && balanceNote && <p className="wallet-note">{balanceNote}</p>}
           <div className="wallet-actions">
             <button type="button" onClick={() => setTopUpOpen(true)}><span><Plus size={17} aria-hidden="true" /></span><strong>Top up</strong><small>Card, bank or crypto</small></button>
             <button type="button" onClick={() => setWithdrawOpen(true)}><span><ArrowUpRight size={17} aria-hidden="true" /></span><strong>Withdraw</strong><small>To bank or Sui address</small></button>
-            <button type="button" onClick={() => setQrOpen(true)}><span><QrCode size={17} aria-hidden="true" /></span><strong>Payment QR</strong><small>Collect from a customer</small></button>
+            <button type="button" onClick={() => setQrOpen(true)}><span><QrCode size={17} aria-hidden="true" /></span><strong>Payment QR</strong><small>Collect or pay</small></button>
           </div>
         </LiftCard>
 
         <article className="panel money-ledger" aria-labelledby="position-title">
           <div className="panel-head"><h2 id="position-title">Where your money is</h2></div>
           <dl className="money-rows">
-            <div><dt>Available to spend</dt>{balance === null ? <dd className="text">Not connected</dd> : <dd>{money(balance)} SUI</dd>}</div>
+            <div><dt>Available to spend</dt>{balances === null ? <dd className="text">Not connected</dd> : <dd>{money(balances.usdc)} USDC, {money(balances.sui)} SUI</dd>}</div>
             {position.pendingIn > 0 && <div className="money-row-pending"><dt><Clock3 size={13} aria-hidden="true" />Top-ups in progress</dt><dd>{money(position.pendingIn)} SUI</dd></div>}
             {position.pendingOut > 0 && <div className="money-row-pending"><dt><Clock3 size={13} aria-hidden="true" />Withdrawals in progress</dt><dd>{money(position.pendingOut)} SUI</dd></div>}
-            <div><dt><LockKeyhole size={13} aria-hidden="true" />Secured for your purchases<small>{position.buying.count} {position.buying.count === 1 ? "order" : "orders"}</small></dt><dd>{money(position.buying.value)} SUI</dd></div>
-            <div><dt><LockKeyhole size={13} aria-hidden="true" />Secured for your sales<small>{position.supplying.count} {position.supplying.count === 1 ? "order" : "orders"}</small></dt><dd>{money(position.supplying.value)} SUI</dd></div>
-            {position.held.count > 0 && <div><dt>Held for open claims<small>{position.held.count} {position.held.count === 1 ? "claim" : "claims"}</small></dt><dd>{money(position.held.value)} SUI</dd></div>}
+            <div><dt><LockKeyhole size={13} aria-hidden="true" />Secured for your purchases<small>{position.buying.count} {position.buying.count === 1 ? "order" : "orders"}</small></dt><dd>{position.buying.value}</dd></div>
+            <div><dt><LockKeyhole size={13} aria-hidden="true" />Secured for your sales<small>{position.supplying.count} {position.supplying.count === 1 ? "order" : "orders"}</small></dt><dd>{position.supplying.value}</dd></div>
+            {position.held.count > 0 && <div><dt>Held for open claims<small>{position.held.count} {position.held.count === 1 ? "claim" : "claims"}</small></dt><dd>{position.held.value}</dd></div>}
           </dl>
           <p className="money-foot"><ShieldCheck size={14} aria-hidden="true" />Secured funds are held by the Sui escrow contract. Wallet actions cannot move them.</p>
           <a className="panel-link" href="/orders">Open orders<ArrowRight size={13} aria-hidden="true" /></a>
@@ -133,9 +155,9 @@ export default function WalletPage() {
             {movements.map((item) => (
               <li key={item.id}>
                 <span className={`movement-icon movement-${item.type}`}>{item.type === "in" ? <ArrowDownLeft size={15} aria-hidden="true" /> : <ArrowUpRight size={15} aria-hidden="true" />}</span>
-                <div><strong>{item.title}</strong><small>{item.detail}. {new Date(item.at).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}</small></div>
+                <div><strong>{item.title}</strong><small>{item.detail}. {new Date(item.at).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}{item.transactionDigest && <> <a className="link" href={explorerTransactionUrl(item.transactionDigest)} target="_blank" rel="noreferrer">Receipt on Suiscan<ExternalLink size={11} aria-hidden="true" /></a></>}</small></div>
                 <span className={`pill ${item.state === "pending" ? "pill-attention" : "pill-success"}`}>{item.state === "pending" ? "Pending" : "Complete"}</span>
-                <strong className={`num ${item.type === "in" ? "amount-in" : ""}`}>{item.type === "in" ? "+" : "-"}{money(item.amount)} SUI</strong>
+                <strong className={`num ${item.type === "in" ? "amount-in" : ""}`}>{item.type === "in" ? "+" : "-"}{money(item.amount)} {item.currency ?? "SUI"}</strong>
               </li>
             ))}
           </ul>
@@ -145,7 +167,8 @@ export default function WalletPage() {
       <TopUpDialog open={topUpOpen} onOpenChange={setTopUpOpen} address={address} company={workspace.company} onFaucet={requestFaucet}
         onSubmitted={(movement) => { record(movement); setNotice(movement.state === "complete" ? `${money(movement.amount)} SUI arrived at your address. You can fund escrow with it now.` : "Your top-up was submitted. It shows as pending until the funds arrive at your Sui address."); }} />
       <WithdrawDialog open={withdrawOpen} onOpenChange={setWithdrawOpen} available={balance ?? 0} onSubmitted={(movement) => { record(movement); setNotice("Your withdrawal request was submitted and is pending review."); }} />
-      <PaymentQrDialog open={qrOpen} onOpenChange={setQrOpen} company={workspace.company} address={address} />
+      <PaymentQrDialog open={qrOpen} onOpenChange={setQrOpen} company={workspace.company} address={address}
+        onPaid={(movement) => { record(movement); void refreshBalances(); setNotice(`${money(movement.amount)} ${movement.currency} paid. Your receipt is on Sui.`); }} />
     </AppShell>
   );
 }
@@ -285,35 +308,162 @@ function WithdrawDialog({ open, onOpenChange, available, onSubmitted }: { open: 
   );
 }
 
-function PaymentQrDialog({ open, onOpenChange, company, address }: { open: boolean; onOpenChange: (open: boolean) => void; company: string; address: string }) {
+/** Reads QR codes from the camera where the browser offers BarcodeDetector. Everywhere else the
+ *  request can be pasted, which is also how a desktop user pays from a phone photo. */
+function QrScanner({ onResult, onError }: { onResult: (text: string) => void; onError: (message: string) => void }) {
+  const [video, setVideo] = useState<HTMLVideoElement | null>(null);
+  useEffect(() => {
+    if (!video) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const Detector = (window as any).BarcodeDetector as (new (options: { formats: string[] }) => { detect: (source: HTMLVideoElement) => Promise<Array<{ rawValue: string }>> }) | undefined;
+    if (!Detector) { onError("This browser cannot scan from the camera. Paste the payment request instead."); return; }
+    let stream: MediaStream | undefined;
+    let timer = 0;
+    let stopped = false;
+    const detector = new Detector({ formats: ["qr_code"] });
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+      .then((media) => {
+        if (stopped) { media.getTracks().forEach((track) => track.stop()); return; }
+        stream = media;
+        video.srcObject = media;
+        return video.play();
+      })
+      .then(() => {
+        timer = window.setInterval(async () => {
+          try {
+            const codes = await detector.detect(video);
+            const hit = codes.find((code) => code.rawValue);
+            if (hit) { window.clearInterval(timer); onResult(hit.rawValue); }
+          } catch { /* keep scanning */ }
+        }, 350);
+      })
+      .catch(() => onError("The camera could not be opened. Paste the payment request instead."));
+    return () => { stopped = true; window.clearInterval(timer); stream?.getTracks().forEach((track) => track.stop()); };
+  }, [video, onResult, onError]);
+  return <video ref={setVideo} className="qr-scanner" muted playsInline aria-label="Camera view for scanning a payment QR" />;
+}
+
+function PaymentQrDialog({ open, onOpenChange, company, address, onPaid }: { open: boolean; onOpenChange: (open: boolean) => void; company: string; address: string; onPaid: (movement: Movement) => void }) {
+  const escrow = useEscrowActions();
+  const [mode, setMode] = useState<"receive" | "pay">("receive");
+  // Receive
   const [amount, setAmount] = useState("320.00");
+  const [currency, setCurrency] = useState<"USDC" | "SUI">("USDC");
   const [reference, setReference] = useState("Walk-in sale");
   const [seconds, setSeconds] = useState(30);
-  const [sessionId, setSessionId] = useState(1842);
+  const [sessionId, setSessionId] = useState(() => Math.floor(1000 + Math.random() * 9000));
+  // Pay
+  const [scanning, setScanning] = useState(false);
+  const [pasted, setPasted] = useState("");
+  const [request, setRequest] = useState<PaymentRequest | null>(null);
+  const [payError, setPayError] = useState("");
+  const [paying, setPaying] = useState(false);
+  const [paid, setPaid] = useState<{ digest: string; receiptObjectId?: string } | null>(null);
+
   useEffect(() => {
-    if (!open) return;
+    if (!open || mode !== "receive") return;
     setSeconds(30);
     const timer = window.setInterval(() => setSeconds((current) => { if (current <= 1) { setSessionId((id) => id + 1); return 30; } return current - 1; }), 1000);
     return () => window.clearInterval(timer);
-  }, [open]);
-  const payload = useMemo(() => JSON.stringify({ network: "sui:testnet", to: address || "unknown", merchant: company, amount: amount || "0.00", currency: "SUI", reference: reference || "Sale", session: `PP-${sessionId}` }), [address, company, amount, reference, sessionId]);
+  }, [open, mode]);
+
+  const payload = useMemo(() => JSON.stringify({
+    v: 1, network: "sui:testnet", to: address || "unknown", merchant: company, amount: amount || "0.00", currency, coinType: COINS[currency].type,
+    reference: reference || "Sale", session: `PP-${sessionId}`,
+  } satisfies PaymentRequest), [address, company, amount, currency, reference, sessionId]);
+
+  const close = (next: boolean) => {
+    if (!next) { setScanning(false); setPasted(""); setRequest(null); setPayError(""); setPaid(null); }
+    onOpenChange(next);
+  };
+
+  const read = useCallback((text: string) => {
+    setScanning(false);
+    try { setRequest(parsePaymentRequest(text)); setPayError(""); } catch (cause) { setRequest(null); setPayError(cause instanceof Error ? cause.message : "That is not a payment request."); }
+  }, []);
+  const scanError = useCallback((message: string) => { setScanning(false); setPayError(message); }, []);
+
+  const pay = async () => {
+    if (!request) return;
+    setPaying(true);
+    setPayError("");
+    try {
+      const result = await escrow.payRequest(request);
+      setPaid(result);
+      onPaid({ id: crypto.randomUUID(), type: "out", title: `Paid ${request.merchant || "a merchant"}`, detail: `${request.reference}, session ${request.session}`, amount: Number(request.amount), currency: request.currency || COINS.USDC.symbol, at: new Date().toISOString(), state: "complete", transactionDigest: result.digest });
+    } catch (cause) {
+      setPayError(cause instanceof Error ? cause.message : "The payment failed.");
+    } finally {
+      setPaying(false);
+    }
+  };
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={close}>
       <DialogContent className="money-dialog qr-dialog">
-        <DialogHeader><DialogTitle>Customer payment QR</DialogTitle><DialogDescription>The customer scans this code to pay {company} in SUI. The amount and recipient are fixed in the request, and the code renews every 30 seconds so it cannot be reused.</DialogDescription></DialogHeader>
-        <div className="qr-grid">
-          <div>
-            <label className="field"><span>Amount</span><div className="amount-input"><Input type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} /><b>SUI</b></div></label>
-            <label className="field"><span>Reference</span><Input value={reference} onChange={(event) => setReference(event.target.value)} /></label>
-            <p className="form-note">Payments land in your available balance, not in any purchase order escrow.</p>
-          </div>
-          <div className="qr-ticket">
-            <QRCodeSVG value={payload} size={176} bgColor="#ffffff" fgColor="#0d1d30" level="M" marginSize={1} />
-            <span className="qr-live"><i aria-hidden="true" />Renews in {seconds}s</span>
-            <strong>{money(Number(amount || 0))} <small>SUI</small></strong>
-            <small>{company}, session PP-{sessionId}</small>
-          </div>
+        <DialogHeader>
+          <DialogTitle>Payment QR</DialogTitle>
+          <DialogDescription>{mode === "receive"
+            ? `A customer scans this code to pay ${company}. The amount and recipient are fixed in the request, and the code renews every 30 seconds so it cannot be reused.`
+            : "Scan or paste a merchant's payment request. One sponsored transaction pays them and leaves a receipt on Sui bound to that exact request."}</DialogDescription>
+        </DialogHeader>
+        <div className="segmented" role="radiogroup" aria-label="Receive or pay">
+          <button type="button" className={mode === "receive" ? "segment segment-active" : "segment"} onClick={() => setMode("receive")}><ArrowDownLeft size={14} aria-hidden="true" />Receive</button>
+          <button type="button" className={mode === "pay" ? "segment segment-active" : "segment"} onClick={() => setMode("pay")}><ArrowUpRight size={14} aria-hidden="true" />Pay</button>
         </div>
+
+        {mode === "receive" ? (
+          <div className="qr-grid">
+            <div>
+              <label className="field"><span>Amount</span><div className="amount-input"><Input type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} /><b>{currency}</b></div></label>
+              <label className="field"><span>Currency</span><select className="select" value={currency} onChange={(event) => setCurrency(event.target.value as "USDC" | "SUI")}><option value="USDC">Testnet USDC</option><option value="SUI">Testnet SUI</option></select></label>
+              <label className="field"><span>Reference</span><Input value={reference} onChange={(event) => setReference(event.target.value)} maxLength={128} /></label>
+              <p className="form-note">Payments land in your available balance, not in any purchase order escrow. The payer keeps a receipt whose hash matches this request.</p>
+            </div>
+            <div className="qr-ticket">
+              {address ? <QRCodeSVG value={payload} size={176} bgColor="#ffffff" fgColor="#0d1d30" level="M" marginSize={1} /> : <span>Sign in to show your payment code</span>}
+              <span className="qr-live"><i aria-hidden="true" />Renews in {seconds}s</span>
+              <strong>{money(Number(amount || 0))} <small>{currency}</small></strong>
+              <small>{company}, session PP-{sessionId}</small>
+              {address && <button type="button" className="text-button" onClick={() => void navigator.clipboard.writeText(payload)}><ClipboardCopy size={12} aria-hidden="true" />Copy request text</button>}
+            </div>
+          </div>
+        ) : paid ? (
+          <>
+            <span className="order-created-mark"><Check size={22} aria-hidden="true" /></span>
+            <DialogHeader><DialogTitle>Paid</DialogTitle><DialogDescription>{money(Number(request?.amount ?? 0))} {request?.currency} went to {request?.merchant || "the merchant"}. Your receipt object is owned by your address and can be verified against the request hash.</DialogDescription></DialogHeader>
+            <p className="form-note"><a className="link" href={explorerTransactionUrl(paid.digest)} target="_blank" rel="noreferrer">View the payment on Suiscan<ExternalLink size={12} aria-hidden="true" /></a>{paid.receiptObjectId && <> Receipt object <code>{paid.receiptObjectId.slice(0, 10)}...{paid.receiptObjectId.slice(-6)}</code></>}</p>
+            <DialogFooter><Button className="btn-primary" onClick={() => close(false)}>Done</Button></DialogFooter>
+          </>
+        ) : (
+          <div className="qr-pay">
+            {scanning ? (
+              <>
+                <QrScanner onResult={read} onError={scanError} />
+                <Button variant="outline" type="button" onClick={() => setScanning(false)}>Stop scanning</Button>
+              </>
+            ) : request ? (
+              <>
+                <dl className="fact-list">
+                  <div><dt>Pay to</dt><dd>{request.merchant || "Merchant"}<small><code>{request.to.slice(0, 10)}...{request.to.slice(-6)}</code></small></dd></div>
+                  <div><dt>Amount</dt><dd><strong>{money(Number(request.amount))} {request.currency}</strong></dd></div>
+                  <div><dt>Reference</dt><dd>{request.reference}<small>Session {request.session}</small></dd></div>
+                  <div><dt>Signed by</dt><dd>{escrow.signingAddress ? <code>{escrow.signingAddress.slice(0, 10)}...{escrow.signingAddress.slice(-6)}</code> : "Sign in first"}</dd></div>
+                </dl>
+                <p className="form-note">This is a direct payment, not an escrow. It cannot be reversed once signed.</p>
+                {payError && <p className="form-error" role="alert">{payError}</p>}
+                <DialogFooter><Button variant="outline" type="button" onClick={() => { setRequest(null); setPasted(""); }}>Back</Button><Button className="btn-primary" type="button" disabled={paying || !escrow.signingAddress} onClick={() => void pay()}>{paying ? "Paying" : `Pay ${money(Number(request.amount))} ${request.currency}`}</Button></DialogFooter>
+              </>
+            ) : (
+              <>
+                <div className="action-buttons"><Button className="btn-primary" type="button" onClick={() => { setPayError(""); setScanning(true); }}><Camera size={14} aria-hidden="true" />Scan a QR code</Button></div>
+                <label className="field"><span>Or paste the payment request</span><textarea value={pasted} onChange={(event) => setPasted(event.target.value)} rows={4} placeholder='{"v":1,"network":"sui:testnet","to":"0x...","amount":"320.00",...}' /></label>
+                {payError && <p className="form-error" role="alert">{payError}</p>}
+                <DialogFooter><Button variant="outline" type="button" onClick={() => close(false)}>Cancel</Button><Button className="btn-primary" type="button" disabled={!pasted.trim()} onClick={() => read(pasted)}>Review payment<ArrowRight size={14} aria-hidden="true" /></Button></DialogFooter>
+              </>
+            )}
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
