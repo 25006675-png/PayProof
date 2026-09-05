@@ -10,7 +10,7 @@ import { type Anchor, ExtractionComparison, attachFile, buildDocument, extractPu
 import { type DemoOrder, type DocumentKind, type InspectionLine, type OrderDocument, type OrderShipment, claimOwner, formatDate, formatDateTime, formatOrderMoney as money, sha256Hex } from "@/lib/demo-orders";
 import { loadClaim, openDemoClaim } from "@/lib/dispute-actions";
 import { useEscrowActions } from "@/lib/escrow-actions";
-import { acceptLiveInvitation, acceptLiveInvite, cancelLiveInvite, markLiveDelivered, markLiveShipment, sendLiveInvite, tradeOrderToView, viewLiveOrder } from "@/lib/live-orders";
+import { acceptLiveInvitation, acceptLiveInvite, anchorLiveDocument, cancelLiveInvite, markLiveDelivered, markLiveShipment, sendLiveInvite, tradeOrderToView, viewLiveOrder } from "@/lib/live-orders";
 import { withExtras } from "@/lib/local-order-extras";
 import { STATUS, demoNextStatus, isDisputed, nextAction } from "@/lib/order-status";
 import type { InvitationDelivery } from "@/lib/payproof-api";
@@ -196,8 +196,8 @@ function ConfirmControls({ order, company, live, inviteToken, busy, run, onInvit
       <AgreementBlock company={company} accepted={accepted} onChange={setAccepted}
         clauses={[
           `${company} confirms order ${order.reference} version ${order.version} as ${iAmBuyer ? "buyer" : "supplier"}. The confirmed terms are hashed into the Sui escrow when it is funded.`,
-          iAmBuyer ? `You fund ${money(order.value)} ${order.currency} into escrow next. Release follows the inspection result.` : `${order.buyer} funds ${money(order.value)} ${order.currency} into escrow. The accepted value is released to you when the buyer accepts the delivery.`,
-          "Any exception at delivery is handled under the Dispute Resolution Policy: the accepted value is released and only the disputed amount stays in escrow.",
+          order.releasePlan ? `${money(order.releasePlan.depositValue)} ${order.currency} releases at funding, ${money(order.releasePlan.dispatchValue)} ${order.currency} releases with shipment evidence, and ${money(order.releasePlan.deliveryValue)} ${order.currency} remains for delivery.` : `The full ${money(order.value)} ${order.currency} remains in escrow until delivery.`,
+          "Released amounts are final. Any delivery exception or refund is limited to the balance still held in escrow.",
         ]} />
       <div className="action-buttons">
         <Button variant="outline" disabled={Boolean(busy)} onClick={() => setChangeOpen(true)}><X size={14} aria-hidden="true" />Request changes</Button>
@@ -232,7 +232,7 @@ function FundControls({ order, company, live, busy, run }: StepProps) {
     <div className="action-body">
       {order.confirmation && <div className="agreement agreement-done"><Check size={15} aria-hidden="true" /><span>Confirmed by <strong>{order.confirmation.organizationName || order.counterparty}</strong> on {formatDateTime(order.confirmation.confirmedAt)} under Terms of Service and Dispute Resolution Policy version {order.confirmation.termsVersion}.</span></div>}
       <dl className="fact-list">
-        <div><dt>Amount to secure</dt><dd><strong>{money(order.value)} {order.currency}</strong></dd></div>
+        <div><dt>Amount to secure</dt><dd><strong>{money(order.value)} {order.currency}</strong>{order.releasePlan && <small>{money(order.releasePlan.depositValue)} {order.currency} releases in this transaction</small>}</dd></div>
         <div><dt>Released to</dt><dd>{order.supplier}<small>{live ? short(payout) : "Verified payout address"}</small></dd></div>
         <div><dt>Signed by</dt><dd>{live ? (escrow.signingAddress ? short(escrow.signingAddress) : "No Sui address in this session") : "Your business wallet"}<small>{live && escrow.hasZkLogin ? "Google zkLogin address" : live ? "Connected wallet" : ""}</small></dd></div>
       </dl>
@@ -240,11 +240,11 @@ function FundControls({ order, company, live, busy, run }: StepProps) {
         <Button className="btn-primary" disabled={Boolean(busy)} onClick={() => setOpen(true)}>Fund escrow<ArrowRight size={14} aria-hidden="true" /></Button>
       </div>
       <ConsentDialog open={open} onOpenChange={setOpen} company={company} title={`Fund ${money(order.value)} ${order.currency} into escrow`}
-        description="The amount moves from your Sui address into the escrow contract for this order. ProofPay cannot withdraw it."
+        description={order.releasePlan ? `${money(order.releasePlan.depositValue)} ${order.currency} is paid to ${order.supplier} now. The remaining ${money(order.releasePlan.dispatchValue + order.releasePlan.deliveryValue)} ${order.currency} stays in the escrow contract.` : "The amount moves from your Sui address into the escrow contract for this order. ProofPay cannot withdraw it."}
         clauses={[
-          `${money(order.value)} ${order.currency} is locked for order ${order.reference} and released to ${order.supplier} only when you accept the delivery, or according to the claim outcome.`,
+          order.releasePlan ? `Funding follows the confirmed ${money(order.releasePlan.depositValue)} / ${money(order.releasePlan.dispatchValue)} / ${money(order.releasePlan.deliveryValue)} ${order.currency} release plan.` : `${money(order.value)} ${order.currency} is locked for order ${order.reference}.`,
           "The confirmed order terms are hashed into the escrow so neither party can later dispute what was agreed.",
-          "Release follows the inspection result and the Dispute Resolution Policy.",
+          "Any amount released before delivery is final and cannot be refunded through PayProof.",
         ]}
         confirmLabel={live ? "Sign and fund escrow" : "Fund escrow"} busy={busy === "fund"}
         onConfirm={async () => {
@@ -306,7 +306,7 @@ function ShipForm({ order, company, live, busy, run }: StepProps) {
   const [expectedAt, setExpectedAt] = useState(order.delivery);
   const [file, setFile] = useState<File | null>(null);
   const [open, setOpen] = useState(false);
-  const valid = carrier.trim().length > 1 && tracking.trim().length > 3 && Boolean(dispatchedAt);
+  const valid = carrier.trim().length > 1 && tracking.trim().length > 3 && Boolean(dispatchedAt) && Boolean(file);
   const shipment: OrderShipment = { carrier: carrier.trim(), trackingNumber: tracking.trim(), dispatchedAt: new Date(dispatchedAt).toISOString(), expectedAt };
   return (
     <div className="action-body">
@@ -318,13 +318,13 @@ function ShipForm({ order, company, live, busy, run }: StepProps) {
         <label className="field"><span>Dispatch date</span><Input type="date" value={dispatchedAt} onChange={(event) => setDispatchedAt(event.target.value)} /></label>
         <label className="field"><span>Expected arrival</span><Input type="date" value={expectedAt} onChange={(event) => setExpectedAt(event.target.value)} /></label>
       </div>
-      <FileField label="Attach dispatch note or carrier receipt (optional)" accept=".pdf,.png,.jpg,.jpeg,.webp" onFile={setFile} file={file} />
+      <FileField label="Attach dispatch note or carrier receipt" hint="Required. Its fingerprint is anchored to the shipment release on Sui." accept=".pdf,.png,.jpg,.jpeg,.webp" onFile={setFile} file={file} />
       <div className="action-buttons">
         <Button className="btn-primary" disabled={!valid || Boolean(busy)} onClick={() => setOpen(true)}><Truck size={14} aria-hidden="true" />Mark as shipped</Button>
       </div>
       <ConsentDialog open={open} onOpenChange={setOpen} company={company} title="Mark as shipped"
-        description={`${order.buyer} will see the carrier, tracking number and expected arrival. They record delivery when the goods arrive.${live ? " You sign one Sui transaction that marks shipment on the escrow and starts the inspection window." : ""}`}
-        clauses={["The dispatch details and any attached evidence are genuine and unaltered.", live ? "Shipment is recorded on the escrow contract, and the attached document's fingerprint is anchored in the same transaction." : "This update is recorded on the shared order and both parties see it."]}
+        description={`${order.buyer} will see the carrier, tracking number and expected arrival.${order.releasePlan ? ` ${money(order.releasePlan.dispatchValue)} ${order.currency} is released now.` : ""}${live ? " One Sui transaction records shipment, anchors the evidence and releases the agreed amount." : ""}`}
+        clauses={["The dispatch details and attached evidence are genuine and unaltered.", order.releasePlan ? `The ${money(order.releasePlan.dispatchValue)} ${order.currency} dispatch payment is final and reduces the balance available for a later claim.` : "Shipment is recorded on the escrow contract, and the document fingerprint is anchored in the same transaction."]}
         confirmLabel={live ? "Sign and mark as shipped" : "Mark as shipped"} busy={busy === "ship"}
         onConfirm={async () => {
           if (await run("ship", async () => {
@@ -335,10 +335,15 @@ function ShipForm({ order, company, live, busy, run }: StepProps) {
               return next;
             }
             if (!order.raw) throw new Error("Order data is missing.");
-            const fileHash = file ? await sha256Hex(file) : undefined;
-            const transactionDigest = order.raw.funding ? await escrow.markShipped(order.raw, fileHash) : undefined;
-            next = withExtras(await markLiveShipment(order.id, { ...shipment, transactionDigest }));
-            if (file) next = await attachFile(next, file, "dispatch_evidence", "SUPPLIER", { anchorTransactionDigest: transactionDigest });
+            if (!file) throw new Error("Attach a carrier receipt or dispatch note before marking shipment.");
+            const fileHash = await sha256Hex(file);
+            const staged = await attachFile(order, file, "dispatch_evidence", "SUPPLIER");
+            const stagedDocument = staged.documents.find((document) => document.kind === "dispatch_evidence" && document.sha256 === fileHash && !document.anchor);
+            if (!stagedDocument) throw new Error("The dispatch evidence was uploaded but could not be found on this order.");
+            const transactionDigest = staged.raw?.funding ? await escrow.markShipped(staged.raw, fileHash) : undefined;
+            if (!transactionDigest) throw new Error("The shipment transaction was not submitted.");
+            next = withExtras(await markLiveShipment(order.id, { ...shipment, transactionDigest, evidenceSha256: fileHash }));
+            next = withExtras(await anchorLiveDocument(order.id, stagedDocument.id, transactionDigest));
             return next;
           }, live ? "Shipment is signed on Sui. The order is in transit." : "The order is marked in transit.")) setOpen(false);
         }} />

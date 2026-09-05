@@ -30,6 +30,8 @@ function eventJson(value: unknown): Record<string, unknown> {
   return event?.json ?? event?.parsedJson ?? {};
 }
 
+const packageOf = (order: TradeOrder) => order.funding?.packageId || ESCROW_PACKAGE_ID;
+
 async function proposalHashBytes(proposalId: string): Promise<number[]> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(proposalId));
   return Array.from(new Uint8Array(digest));
@@ -215,11 +217,14 @@ export function useEscrowActions() {
     const tx = new Transaction();
     // Enoki owns the gas coin, so the payment must come from the buyer's own coins.
     const paymentCoin = tx.coin({ balance: BigInt(order.amountUnits), type: order.assetType, useGasCoin: false });
+    const releasePlan = order.releasePlan;
+    const packageId = ESCROW_PACKAGE_ID;
     tx.moveCall({
-      target: `${ESCROW_PACKAGE_ID}::escrow::create`,
+      target: `${packageId}::escrow::${releasePlan ? "create_with_milestones" : "create"}`,
       typeArguments: [order.assetType],
       arguments: [
         paymentCoin, tx.pure.address(order.supplierWalletAddress), tx.pure.address(arbitrator), tx.pure.vector("u8", hexBytes(order.orderHash)), tx.pure.string(order.reference),
+        ...(releasePlan ? [tx.pure.u64(releasePlan.depositUnits), tx.pure.u64(releasePlan.dispatchUnits), tx.pure.u64(releasePlan.deliveryUnits)] : []),
         tx.pure.u64(deadline), tx.pure.u64(INSPECTION_WINDOW_MS), tx.object.clock(),
       ],
     });
@@ -232,7 +237,7 @@ export function useEscrowActions() {
       return await apiRequest<TradeOrder>(`/v1/orders/${order.id}/funding`, {
         method: "POST",
         body: JSON.stringify({
-          packageId: ESCROW_PACKAGE_ID, escrowObjectId: objectId, transactionDigest: digest, buyerAddress: signingAddress, supplierAddress: order.supplierWalletAddress, arbitratorAddress: arbitrator,
+          packageId, escrowObjectId: objectId, transactionDigest: digest, buyerAddress: signingAddress, supplierAddress: order.supplierWalletAddress, arbitratorAddress: arbitrator,
           deliveryDeadlineMs: deadline, inspectionWindowMs: INSPECTION_WINDOW_MS,
         }),
       });
@@ -246,13 +251,16 @@ export function useEscrowActions() {
   async function markShipped(order: TradeOrder, evidenceSha256?: string): Promise<string> {
     requireSigner("Sign in with Google or connect the supplier wallet before marking shipment.");
     if (!order.funding) throw new Error("Only a funded order can be shipped.");
+    if (!evidenceSha256) throw new Error("Attach a carrier receipt or dispatch note before releasing the dispatch payment.");
     const tx = new Transaction();
-    tx.moveCall({ target: `${ESCROW_PACKAGE_ID}::escrow::mark_shipped`, typeArguments: [order.assetType], arguments: [tx.object(order.funding.escrowObjectId), tx.object.clock()] });
-    if (evidenceSha256) {
+    if (order.releasePlan) {
       tx.moveCall({
-        target: `${ESCROW_PACKAGE_ID}::escrow::anchor_evidence`, typeArguments: [order.assetType],
-        arguments: [tx.object(order.funding.escrowObjectId), tx.pure.u8(EVIDENCE_KIND.dispatch_evidence), tx.pure.vector("u8", hexBytes(evidenceSha256, "The evidence hash")), tx.object.clock()],
+        target: `${packageOf(order)}::escrow::mark_shipped_and_release`, typeArguments: [order.assetType],
+        arguments: [tx.object(order.funding.escrowObjectId), tx.pure.vector("u8", hexBytes(evidenceSha256, "The evidence hash")), tx.object.clock()],
       });
+    } else {
+      tx.moveCall({ target: `${packageOf(order)}::escrow::mark_shipped`, typeArguments: [order.assetType], arguments: [tx.object(order.funding.escrowObjectId), tx.object.clock()] });
+      tx.moveCall({ target: `${packageOf(order)}::escrow::anchor_evidence`, typeArguments: [order.assetType], arguments: [tx.object(order.funding.escrowObjectId), tx.pure.u8(EVIDENCE_KIND.dispatch_evidence), tx.pure.vector("u8", hexBytes(evidenceSha256, "The evidence hash")), tx.object.clock()] });
     }
     const { digest } = await signed(tx, "The shipment transaction failed.");
     return digest;
@@ -264,7 +272,7 @@ export function useEscrowActions() {
     if (!order.funding) throw new Error("Evidence can only be anchored to a funded order.");
     const tx = new Transaction();
     tx.moveCall({
-      target: `${ESCROW_PACKAGE_ID}::escrow::anchor_evidence`, typeArguments: [order.assetType],
+      target: `${packageOf(order)}::escrow::anchor_evidence`, typeArguments: [order.assetType],
       arguments: [tx.object(order.funding.escrowObjectId), tx.pure.u8(EVIDENCE_KIND[kind] ?? 5), tx.pure.vector("u8", hexBytes(sha256Hex, "The evidence hash")), tx.object.clock()],
     });
     const { digest } = await signed(tx, "The evidence anchoring transaction failed.");
@@ -276,7 +284,7 @@ export function useEscrowActions() {
     requireSigner("Sign in with Google or connect the buyer wallet before releasing payment.");
     if (!order.funding) throw new Error("Only a funded order can be accepted.");
     const tx = new Transaction();
-    tx.moveCall({ target: `${ESCROW_PACKAGE_ID}::escrow::release_full`, typeArguments: [order.assetType], arguments: [tx.object(order.funding.escrowObjectId), tx.object.clock()] });
+    tx.moveCall({ target: `${packageOf(order)}::escrow::release_full`, typeArguments: [order.assetType], arguments: [tx.object(order.funding.escrowObjectId), tx.object.clock()] });
     const { digest, indexed } = await signed(tx, "The release transaction failed.");
     return acceptLiveDelivery(order.id, { transactionDigest: digest, receiptObjectId: receiptIdOf(indexed), inspection });
   }
@@ -288,7 +296,7 @@ export function useEscrowActions() {
     const disputedUnits = toUnits(input.disputedValue, order.assetType);
     const requestedUnits = toUnits(input.requestedValue, order.assetType);
     const tx = new Transaction();
-    tx.moveCall({ target: `${ESCROW_PACKAGE_ID}::escrow::open_dispute`, typeArguments: [order.assetType], arguments: [tx.object(order.funding.escrowObjectId), tx.pure.u64(disputedUnits), tx.pure.u64(requestedUnits), tx.object.clock()] });
+    tx.moveCall({ target: `${packageOf(order)}::escrow::open_dispute`, typeArguments: [order.assetType], arguments: [tx.object(order.funding.escrowObjectId), tx.pure.u64(disputedUnits), tx.pure.u64(requestedUnits), tx.object.clock()] });
     let digest: string;
     try {
       digest = (await signed(tx, "The claim transaction failed.")).digest;
@@ -316,7 +324,7 @@ export function useEscrowActions() {
     requireSigner("Sign in with Google or connect the buyer wallet before reclaiming the escrow.");
     if (!order.funding) throw new Error("The order has no escrow funding.");
     const tx = new Transaction();
-    tx.moveCall({ target: `${ESCROW_PACKAGE_ID}::escrow::refund_unshipped`, typeArguments: [order.assetType], arguments: [tx.object(order.funding.escrowObjectId), tx.object.clock()] });
+    tx.moveCall({ target: `${packageOf(order)}::escrow::refund_unshipped`, typeArguments: [order.assetType], arguments: [tx.object(order.funding.escrowObjectId), tx.object.clock()] });
     const { digest, indexed } = await signed(tx, "The refund transaction failed.");
     return settleLiveDeadline(order.id, { kind: "refund_unshipped", transactionDigest: digest, receiptObjectId: receiptIdOf(indexed) });
   }
@@ -326,7 +334,7 @@ export function useEscrowActions() {
     requireSigner("Sign in with Google or connect the supplier wallet before claiming the escrow.");
     if (!order.funding) throw new Error("The order has no escrow funding.");
     const tx = new Transaction();
-    tx.moveCall({ target: `${ESCROW_PACKAGE_ID}::escrow::claim_uninspected`, typeArguments: [order.assetType], arguments: [tx.object(order.funding.escrowObjectId), tx.object.clock()] });
+    tx.moveCall({ target: `${packageOf(order)}::escrow::claim_uninspected`, typeArguments: [order.assetType], arguments: [tx.object(order.funding.escrowObjectId), tx.object.clock()] });
     const { digest, indexed } = await signed(tx, "The claim transaction failed.");
     return settleLiveDeadline(order.id, { kind: "claim_uninspected", transactionDigest: digest, receiptObjectId: receiptIdOf(indexed) });
   }
@@ -337,7 +345,7 @@ export function useEscrowActions() {
     if (!order.funding) throw new Error("The order has no escrow funding.");
     const tx = new Transaction();
     tx.moveCall({
-      target: `${ESCROW_PACKAGE_ID}::escrow::approve_${side}`, typeArguments: [order.assetType],
+      target: `${packageOf(order)}::escrow::approve_${side}`, typeArguments: [order.assetType],
       arguments: [tx.object(order.funding.escrowObjectId), tx.pure.u64(toUnits(allocation.buyerValue, order.assetType)), tx.pure.u64(toUnits(allocation.supplierValue, order.assetType)), tx.pure.vector("u8", await proposalHashBytes(allocation.proposalId))],
     });
     const { digest } = await signed(tx, "The approval transaction failed.");
@@ -348,11 +356,11 @@ export function useEscrowActions() {
     requireSigner("Connect a wallet before executing the settlement.");
     if (!order.funding) throw new Error("The order has no escrow funding.");
     const tx = new Transaction();
-    tx.moveCall({ target: `${ESCROW_PACKAGE_ID}::escrow::execute_settlement`, typeArguments: [order.assetType], arguments: [tx.object(order.funding.escrowObjectId), tx.object.clock()] });
+    tx.moveCall({ target: `${packageOf(order)}::escrow::execute_settlement`, typeArguments: [order.assetType], arguments: [tx.object(order.funding.escrowObjectId), tx.object.clock()] });
     const { digest, indexed } = await signed(tx, "The settlement transaction failed.");
     const receipt = receiptIdOf(indexed);
     if (!receipt) throw new Error("Settlement executed, but its receipt event was not indexed yet. Refresh and try again.");
-    return confirmClaimExecution(disputeId, { transactionDigest: digest, packageId: ESCROW_PACKAGE_ID, escrowObjectId: order.funding.escrowObjectId, receiptObjectId: receipt });
+    return confirmClaimExecution(disputeId, { transactionDigest: digest, packageId: packageOf(order), escrowObjectId: order.funding.escrowObjectId, receiptObjectId: receipt });
   }
 
   /** Pays a merchant's request directly, outside any escrow, and keeps an on-chain receipt bound to

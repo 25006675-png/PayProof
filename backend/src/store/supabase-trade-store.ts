@@ -45,6 +45,14 @@ export class SupabaseTradeStore implements TradeStore {
     return (data ?? []).map((row) => row.aggregate as TradeOrder);
   }
 
+  async listForOrganization(organizationId: string): Promise<TradeOrder[]> {
+    const { data, error } = await this.client.from("trade_orders").select("aggregate")
+      .or(`buyer_organization_id.eq.${organizationId},supplier_organization_id.eq.${organizationId}`)
+      .order("updated_at", { ascending: false });
+    if (error) throw new Error(`Supabase organization trade lookup failed: ${error.message}`);
+    return (data ?? []).map((row) => row.aggregate as TradeOrder);
+  }
+
   async saveOrder(order: TradeOrder, expectedVersion: number): Promise<void> {
     const { data, error } = await this.client.rpc("save_trade_order", {
       p_id: order.id,

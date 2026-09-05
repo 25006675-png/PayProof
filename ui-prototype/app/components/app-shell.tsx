@@ -1,7 +1,7 @@
 "use client";
 
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
-import { AlertCircle, Box, Building2, Check, CheckCircle2, ChevronDown, CircleHelp, Info, LogOut, Pencil, Upload, X } from "lucide-react";
+import { AlertCircle, AlertTriangle, Box, Building2, Check, CheckCircle2, ChevronDown, CircleHelp, Info, LogOut, Pencil, Upload, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -48,8 +48,8 @@ export function SampleTag({ label = "Sample" }: { label?: string }) {
   return <span className="sample-tag" title="Sample order. Actions only change this sample, nothing is sent to the backend or Sui.">{label}</span>;
 }
 
-export function Notice({ tone = "info", children, onDismiss }: { tone?: "info" | "success" | "error"; children: ReactNode; onDismiss?: () => void }) {
-  const Icon = tone === "success" ? CheckCircle2 : tone === "error" ? AlertCircle : Info;
+export function Notice({ tone = "info", children, onDismiss }: { tone?: "info" | "success" | "warning" | "error"; children: ReactNode; onDismiss?: () => void }) {
+  const Icon = tone === "success" ? CheckCircle2 : tone === "warning" ? AlertTriangle : tone === "error" ? AlertCircle : Info;
   return (
     <div className={`notice notice-${tone}`} role={tone === "error" ? "alert" : "status"}>
       <Icon size={16} aria-hidden="true" />
@@ -142,6 +142,7 @@ function UserMenu({ company, email }: { company: string; email?: string }) {
           <div className="user-menu-panel" role="menu">
             <div className="user-menu-head"><strong>{company}</strong><small>{email ?? "Browsing without an account"}</small></div>
             {email && <button type="button" role="menuitem" onClick={beginEdit}><Pencil size={14} aria-hidden="true" />Edit company name</button>}
+            {email && <a role="menuitem" href="/trust">Trust profile</a>}
             <a role="menuitem" href="/legal/terms">Terms of Service</a>
             <a role="menuitem" href="/legal/dispute-policy">Dispute Resolution Policy</a>
             {email
@@ -174,7 +175,7 @@ function UserMenu({ company, email }: { company: string; email?: string }) {
   );
 }
 
-export function AppShell({ active, company, children, actionCount = 0 }: { active: "overview" | "orders" | "wallet"; company: string; children: ReactNode; actionCount?: number }) {
+export function AppShell({ active, company, children, actionCount = 0 }: { active: "overview" | "orders" | "wallet" | "none"; company: string; children: ReactNode; actionCount?: number }) {
   const [email, setEmail] = useState<string>();
   useEffect(() => { setEmail(loadSession()?.user.email); }, []);
   return (

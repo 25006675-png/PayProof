@@ -8,6 +8,7 @@ import { AppShell, HelpHint, Logo, Notice, RoleTag, SampleTag, Skeleton, StatusP
 import { ClaimSection } from "@/app/components/claim-section";
 import { ActionPanel } from "@/app/components/order-actions";
 import { DocumentsPanel } from "@/app/components/order-documents";
+import { ReleasePlanBar, releasedStages } from "@/app/components/release-plan";
 import { OrderStepper, OrderTimeline } from "@/app/components/order-stepper";
 import { AnimatedAmount, LiftCard, StageSwitch } from "@/app/components/motion";
 import { type DemoOrder, formatDate, formatDateTime, formatOrderMoney as money, totalQuantity } from "@/lib/demo-orders";
@@ -165,6 +166,15 @@ export default function OrderPage() {
                   : <ActionPanel order={order} company={workspace.company} inviteToken={inviteToken} onChange={change} onInviteConsumed={() => { setInviteToken(""); history.replaceState(null, "", `/orders/${encodeURIComponent(order.id)}`); }} />}
               </StageSwitch>
             </div>
+
+            {order.releasePlan && (
+              <section className="panel release-ledger reveal reveal-3" aria-labelledby="release-title">
+                <div className="panel-head"><h2 id="release-title">Release schedule</h2><span className="panel-meta">Confirmed with the order</span></div>
+                <ReleasePlanBar total={order.value} currency={order.currency}
+                  values={{ deposit: order.releasePlan.depositValue, dispatch: order.releasePlan.dispatchValue, delivery: order.releasePlan.deliveryValue }}
+                  released={releasedStages(order.status)} />
+              </section>
+            )}
   
             <section className="panel reveal reveal-3" aria-labelledby="lines-title">
               <div className="panel-head"><h2 id="lines-title">Order lines</h2><span className="panel-meta">Version {order.version}</span></div>

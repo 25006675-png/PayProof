@@ -26,7 +26,7 @@ const MODE_CLAIM_UNINSPECTED = 4;
 export interface SuiFundingVerifier {
   verify(order: TradeOrder, funding: FundingInput): Promise<FundingVerification>;
   /** Confirms the supplier's mark_shipped transaction on the order's escrow. */
-  verifyShipment?(order: TradeOrder, transactionDigest: string): Promise<{ checkpoint?: string }>;
+  verifyShipment?(order: TradeOrder, transactionDigest: string, evidenceSha256: string): Promise<{ checkpoint?: string; releasedUnits: string; remainingUnits: string }>;
   /** Confirms an anchor_evidence transaction carrying exactly this file hash. */
   verifyEvidenceAnchor?(order: TradeOrder, transactionDigest: string, sha256Hex: string): Promise<{ checkpoint?: string }>;
   /** Confirms the buyer's open_dispute transaction, including the undisputed value it paid out. */
@@ -82,9 +82,11 @@ function assetType(order: TradeOrder): string {
 export class GrpcSuiFundingVerifier implements SuiFundingVerifier {
   private readonly client: SuiFundingReader;
   private readonly packageId: string;
+  private readonly allowedPackages: Set<string>;
 
-  constructor(options: { packageId: string; network?: string; baseUrl?: string; client?: SuiFundingReader }) {
+  constructor(options: { packageId: string; legacyPackageIds?: string[]; network?: string; baseUrl?: string; client?: SuiFundingReader }) {
     this.packageId = objectId(options.packageId, "packageId");
+    this.allowedPackages = new Set([this.packageId, ...(options.legacyPackageIds ?? []).map((value) => objectId(value, "legacyPackageId"))]);
     this.client = options.client ?? new SuiGrpcClient({ network: options.network ?? "testnet", baseUrl: options.baseUrl ?? "https://fullnode.testnet.sui.io:443" });
   }
 
@@ -100,11 +102,17 @@ export class GrpcSuiFundingVerifier implements SuiFundingVerifier {
     return tx;
   }
 
-  private event(tx: any, name: string, order: TradeOrder): any {
-    const expectedType = `${this.packageId}::escrow::${name}<${assetType(order)}>`;
+  private packageFor(order: TradeOrder, candidate = order.funding?.packageId): string {
+    const packageId = objectId(candidate ?? this.packageId, "escrow package ID");
+    if (!this.allowedPackages.has(packageId)) fail("The escrow package is not in the configured allowlist", 400);
+    return packageId;
+  }
+
+  private event(tx: any, name: string, order: TradeOrder, packageId = this.packageFor(order)): any {
+    const expectedType = `${packageId}::escrow::${name}<${assetType(order)}>`;
     const event = (tx.events ?? []).find((candidate: any) => {
       try {
-        return normalizeStructTag(String(candidate.eventType ?? candidate.type)) === expectedType && objectId(String(candidate.packageId), "event package ID") === this.packageId;
+        return normalizeStructTag(String(candidate.eventType ?? candidate.type)) === expectedType && objectId(String(candidate.packageId), "event package ID") === packageId;
       } catch {
         return false;
       }
@@ -116,6 +124,7 @@ export class GrpcSuiFundingVerifier implements SuiFundingVerifier {
   private funded(order: TradeOrder) {
     if (!order.funding) fail("The order has no verified escrow funding", 409);
     return {
+      packageId: this.packageFor(order),
       escrowId: objectId(order.funding.escrowObjectId, "escrowObjectId"),
       buyer: address(order.funding.buyerAddress, "buyerAddress"),
       supplier: address(order.funding.supplierAddress, "supplierAddress"),
@@ -133,8 +142,9 @@ export class GrpcSuiFundingVerifier implements SuiFundingVerifier {
     const buyer = address(funding.buyerAddress, "buyerAddress");
     const supplier = address(funding.supplierAddress, "supplierAddress");
     const arbitrator = address(funding.arbitratorAddress, "arbitratorAddress");
+    const packageId = this.packageFor(order, funding.packageId);
     const tx = await this.read(txDigest, "funding");
-    const event = this.event(tx, "EscrowCreated", order);
+    const event = this.event(tx, "EscrowCreated", order, packageId);
     const data = eventData(event, "EscrowCreated");
     if (event.sender && address(String(event.sender), "event sender") !== buyer) fail("Funding sender does not match the buyer wallet");
     if (objectId(String(data.escrow_id), "EscrowCreated.escrow_id") !== escrowId || address(String(data.buyer), "EscrowCreated.buyer") !== buyer || address(String(data.supplier), "EscrowCreated.supplier") !== supplier || address(String(data.arbitrator), "EscrowCreated.arbitrator") !== arbitrator) {
@@ -143,17 +153,24 @@ export class GrpcSuiFundingVerifier implements SuiFundingVerifier {
     if (String(data.amount) !== order.amountUnits || String(data.order_reference) !== order.reference || bytes(data.order_hash) !== order.orderHash.toLowerCase().replace(/^0x/, "")) {
       fail("EscrowCreated amount, order reference, or order hash does not match the order");
     }
+    const plan = order.releasePlan ?? { depositUnits: "0", dispatchUnits: "0", deliveryUnits: order.amountUnits };
+    if (data.deposit_amount !== undefined && (String(data.deposit_amount) !== plan.depositUnits || String(data.dispatch_amount) !== plan.dispatchUnits || String(data.delivery_amount) !== plan.deliveryUnits)) {
+      fail("EscrowCreated release plan does not match the confirmed order");
+    }
+    if (data.deposit_amount === undefined && (plan.depositUnits !== "0" || plan.dispatchUnits !== "0" || plan.deliveryUnits !== order.amountUnits)) {
+      fail("The escrow package does not support the order's milestone release plan");
+    }
     const deliveryDeadlineMs = data.delivery_deadline_ms === undefined ? undefined : Number(data.delivery_deadline_ms);
     const inspectionWindowMs = data.inspection_window_ms === undefined ? undefined : Number(data.inspection_window_ms);
     if (funding.deliveryDeadlineMs !== undefined && deliveryDeadlineMs !== funding.deliveryDeadlineMs) fail("EscrowCreated delivery deadline does not match the recorded deadline");
     if (funding.inspectionWindowMs !== undefined && inspectionWindowMs !== funding.inspectionWindowMs) fail("EscrowCreated inspection window does not match the recorded window");
     const created = (tx.effects?.changedObjects ?? []).find((change: any) => change.objectId === escrowId && change.idOperation === "Created");
-    const expectedEscrowType = `${this.packageId}::escrow::Escrow<${assetType(order)}>`;
+    const expectedEscrowType = `${packageId}::escrow::Escrow<${assetType(order)}>`;
     if (!created || normalizeStructTag(String(tx.objectTypes?.[escrowId] ?? "")) !== expectedEscrowType) fail("Funding transaction did not create the expected shared escrow object");
     return { ...this.checkpoint(tx), deliveryDeadlineMs, inspectionWindowMs };
   }
 
-  async verifyShipment(order: TradeOrder, transactionDigest: string): Promise<{ checkpoint?: string }> {
+  async verifyShipment(order: TradeOrder, transactionDigest: string, evidenceSha256: string): Promise<{ checkpoint?: string; releasedUnits: string; remainingUnits: string }> {
     const { escrowId, supplier, fundingDigest } = this.funded(order);
     const txDigest = digest(transactionDigest, "transactionDigest");
     if (txDigest === fundingDigest) fail("The shipment transaction must be distinct from the funding transaction");
@@ -162,26 +179,57 @@ export class GrpcSuiFundingVerifier implements SuiFundingVerifier {
     const data = eventData(event, "Shipped");
     if (event.sender && address(String(event.sender), "event sender") !== supplier) fail("Shipment was not signed by the supplier wallet");
     if (objectId(String(data.escrow_id), "Shipped.escrow_id") !== escrowId || address(String(data.supplier), "Shipped.supplier") !== supplier) fail("Shipped event does not match the order's escrow");
-    return this.checkpoint(tx);
+    const plan = order.releasePlan ?? { depositUnits: "0", dispatchUnits: "0", deliveryUnits: order.amountUnits };
+    const expectedHash = evidenceSha256.toLowerCase().replace(/^0x/, "");
+    if (data.evidence_hash === undefined) {
+      if (order.releasePlan) fail("The escrow package did not execute the confirmed dispatch release");
+      const packageId = this.packageFor(order);
+      const anchorType = `${packageId}::escrow::EvidenceAnchored<${assetType(order)}>`;
+      const anchored = (tx.events ?? []).some((candidate: any) => {
+        try {
+          if (normalizeStructTag(String(candidate.eventType ?? candidate.type)) !== anchorType) return false;
+          const anchoredData = eventData(candidate, "EvidenceAnchored");
+          return objectId(String(anchoredData.escrow_id), "EvidenceAnchored.escrow_id") === escrowId
+            && address(String(anchoredData.party), "EvidenceAnchored.party") === supplier
+            && bytes(anchoredData.evidence_hash) === expectedHash;
+        } catch { return false; }
+      });
+      if (!anchored) fail("The legacy shipment transaction did not anchor the required dispatch evidence");
+      return { ...this.checkpoint(tx), releasedUnits: "0", remainingUnits: order.amountUnits };
+    }
+    if (bytes(data.evidence_hash) !== expectedHash) fail("Shipment evidence does not match the anchored dispatch document");
+    if (String(data.released_amount) !== plan.dispatchUnits || String(data.remaining_amount) !== plan.deliveryUnits) fail("Shipment release does not match the confirmed release plan");
+    return { ...this.checkpoint(tx), releasedUnits: plan.dispatchUnits, remainingUnits: plan.deliveryUnits };
   }
 
   async verifyEvidenceAnchor(order: TradeOrder, transactionDigest: string, sha256Hex: string): Promise<{ checkpoint?: string }> {
     const { escrowId, buyer, supplier } = this.funded(order);
     const txDigest = digest(transactionDigest, "anchorTransactionDigest");
     const tx = await this.read(txDigest, "evidence anchor");
-    const expectedType = `${this.packageId}::escrow::EvidenceAnchored<${assetType(order)}>`;
+    const packageId = this.packageFor(order);
+    const expectedType = `${packageId}::escrow::EvidenceAnchored<${assetType(order)}>`;
     const expectedHash = sha256Hex.toLowerCase().replace(/^0x/, "");
     const match = (tx.events ?? []).find((candidate: any) => {
       try {
-        if (normalizeStructTag(String(candidate.eventType ?? candidate.type)) !== expectedType || objectId(String(candidate.packageId), "event package ID") !== this.packageId) return false;
+        if (normalizeStructTag(String(candidate.eventType ?? candidate.type)) !== expectedType || objectId(String(candidate.packageId), "event package ID") !== packageId) return false;
         const data = eventData(candidate, "EvidenceAnchored");
         return objectId(String(data.escrow_id), "EvidenceAnchored.escrow_id") === escrowId && bytes(data.evidence_hash) === expectedHash;
       } catch {
         return false;
       }
     });
-    if (!match) fail("No EvidenceAnchored event in that transaction carries this file's hash for the order's escrow");
-    const party = address(String(eventData(match, "EvidenceAnchored").party), "EvidenceAnchored.party");
+    const shipped = !match ? (tx.events ?? []).find((candidate: any) => {
+      try {
+        if (normalizeStructTag(String(candidate.eventType ?? candidate.type)) !== `${packageId}::escrow::Shipped<${assetType(order)}>`
+          || objectId(String(candidate.packageId), "event package ID") !== packageId) return false;
+        const data = eventData(candidate, "Shipped");
+        return objectId(String(data.escrow_id), "Shipped.escrow_id") === escrowId && bytes(data.evidence_hash) === expectedHash;
+      } catch { return false; }
+    }) : undefined;
+    if (!match && !shipped) fail("No shipment or evidence event in that transaction carries this file's hash for the order's escrow");
+    const party = match
+      ? address(String(eventData(match, "EvidenceAnchored").party), "EvidenceAnchored.party")
+      : address(String(eventData(shipped, "Shipped").supplier), "Shipped.supplier");
     if (party !== buyer && party !== supplier) fail("The evidence was not anchored by a party to the escrow");
     return this.checkpoint(tx);
   }
@@ -199,7 +247,8 @@ export class GrpcSuiFundingVerifier implements SuiFundingVerifier {
     }
     const released = this.event(tx, "UndisputedReleased", order);
     const releasedData = eventData(released, "UndisputedReleased");
-    const expected = (BigInt(order.amountUnits) - BigInt(input.disputedUnits)).toString();
+    const remaining = BigInt(order.releasePlan?.deliveryUnits ?? order.amountUnits);
+    const expected = (remaining - BigInt(input.disputedUnits)).toString();
     if (objectId(String(releasedData.escrow_id), "UndisputedReleased.escrow_id") !== escrowId || address(String(releasedData.supplier), "UndisputedReleased.supplier") !== supplier || String(releasedData.amount) !== expected) {
       fail("The claim transaction did not release the undisputed value to the supplier");
     }
@@ -229,7 +278,9 @@ export class GrpcSuiFundingVerifier implements SuiFundingVerifier {
     const expectedSigner = refund ? buyer : supplier;
     if (event.sender && address(String(event.sender), "event sender") !== expectedSigner) fail(`The ${input.kind} transaction was not signed by the ${refund ? "buyer" : "supplier"} wallet`);
     if (objectId(String(data.escrow_id), "SettlementExecuted.escrow_id") !== escrowId || Number(data.approval_mode) !== expectedMode) fail("SettlementExecuted does not describe this deadline settlement");
-    const total = order.amountUnits;
+    const total = refund && order.releasePlan
+      ? (BigInt(order.releasePlan.dispatchUnits) + BigInt(order.releasePlan.deliveryUnits)).toString()
+      : order.releasePlan?.deliveryUnits ?? order.amountUnits;
     const wholeToEntitled = refund
       ? String(data.buyer_refund) === total && String(data.supplier_release) === "0"
       : String(data.supplier_release) === total && String(data.buyer_refund) === "0";
@@ -243,7 +294,7 @@ export class GrpcSuiFundingVerifier implements SuiFundingVerifier {
     const changes: any[] = tx.effects?.changedObjects ?? [];
     const deleted = changes.some((change) => { try { return objectId(String(change.objectId), "changed object") === escrowId && change.idOperation === "Deleted"; } catch { return false; } });
     if (!deleted) fail("The transaction did not close the order's escrow");
-    const receiptType = `${this.packageId}::escrow::SettlementReceipt<${assetType(order)}>`;
+    const receiptType = `${this.packageFor(order)}::escrow::SettlementReceipt<${assetType(order)}>`;
     const receipt = changes.find((change) => change.idOperation === "Created" && change.objectType && normalizeStructTag(String(change.objectType)) === receiptType);
     if (!receipt) fail("The transaction did not create a settlement receipt");
     const created = objectId(String(receipt.objectId), "receipt object");

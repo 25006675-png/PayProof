@@ -55,6 +55,11 @@ export type TradeOrder = {
   deliveryDate: string;
   deliveryLocation: string;
   lineItems: TradeLineItem[];
+  releasePlan?: { depositUnits: string; dispatchUnits: string; deliveryUnits: string };
+  releaseRecords?: Array<{
+    stage: "deposit" | "dispatch" | "delivery"; amountUnits: string; cumulativeReleasedUnits: string; remainingUnits: string;
+    transactionDigest: string; verificationStatus: "verified_on_chain" | "external_reference"; releasedAt: string; evidenceSha256?: string;
+  }>;
   status: string;
   inviteId?: string;
   inviteExpiresAt?: string;
@@ -126,6 +131,18 @@ export type OrganizationMembership = {
   authority: "owner" | "admin" | "member";
   canBuy: boolean;
   canSupply: boolean;
+  organizationCreatedAt?: string;
+  trustProfilePublishedAt?: string;
+};
+
+export type TrustRoleSummary = {
+  fundedOrders: number; settledOrders: number; disputes: number; deadlineClosures: number;
+  disputeFreeRate?: number; disputeResolutionRate?: number;
+};
+
+export type OrganizationTrustProfile = {
+  organizationId: string; name: string; slug: string; organizationCreatedAt?: string; publishedAt?: string;
+  published: boolean; newOnPayProof: boolean; supplier: TrustRoleSummary; buyer: TrustRoleSummary;
 };
 
 export type WorkspaceProfile = {
@@ -138,6 +155,22 @@ export async function updateWorkspaceName(name: string): Promise<WorkspaceProfil
     method: "PATCH",
     body: JSON.stringify({ name }),
   });
+}
+
+export async function loadTrustProfile(organizationId: string): Promise<OrganizationTrustProfile> {
+  return apiRequest<OrganizationTrustProfile>(`/v1/organizations/${encodeURIComponent(organizationId)}/trust-profile`);
+}
+
+export async function setTrustProfilePublished(organizationId: string, published: boolean): Promise<OrganizationTrustProfile> {
+  return apiRequest<OrganizationTrustProfile>(`/v1/organizations/${encodeURIComponent(organizationId)}/trust-profile`, {
+    method: "PATCH", body: JSON.stringify({ published }),
+  });
+}
+
+export async function loadPublicTrustProfile(slug: string): Promise<OrganizationTrustProfile> {
+  const response = await fetch(`${BACKEND_URL}/public/organizations/${encodeURIComponent(slug)}/trust`);
+  if (!response.ok) throw new Error(await readError(response));
+  return response.json() as Promise<OrganizationTrustProfile>;
 }
 
 export type Dispute = {

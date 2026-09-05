@@ -32,6 +32,7 @@ module payproof::escrow {
     const E_INVALID_EVIDENCE_HASH: u64 = 15;
     const E_DEADLINE_NOT_REACHED: u64 = 16;
     const E_NOT_SHIPPED: u64 = 17;
+    const E_INVALID_RELEASE_PLAN: u64 = 18;
 
     const SHA256_LENGTH: u64 = 32;
     const MAX_REFERENCE_LENGTH: u64 = 128;
@@ -54,6 +55,10 @@ module payproof::escrow {
         supplier: address,
         arbitrator: address,
         total_amount: u64,
+        deposit_amount: u64,
+        dispatch_amount: u64,
+        delivery_amount: u64,
+        released_amount: u64,
         disputed_amount: u64,
         requested_buyer_refund: u64,
         funds: Balance<T>,
@@ -67,6 +72,7 @@ module payproof::escrow {
         inspection_window_ms: u64,
         shipped: bool,
         shipped_at_ms: u64,
+        dispatch_evidence_hash: vector<u8>,
         status: u8,
         undisputed_released: bool,
         buyer_approved: bool,
@@ -104,12 +110,29 @@ module payproof::escrow {
         created_at_ms: u64,
         delivery_deadline_ms: u64,
         inspection_window_ms: u64,
+        deposit_amount: u64,
+        dispatch_amount: u64,
+        delivery_amount: u64,
     }
 
     public struct Shipped<phantom T> has copy, drop {
         escrow_id: object::ID,
         supplier: address,
         shipped_at_ms: u64,
+        evidence_hash: vector<u8>,
+        released_amount: u64,
+        remaining_amount: u64,
+    }
+
+    public struct MilestoneReleased<phantom T> has copy, drop {
+        escrow_id: object::ID,
+        supplier: address,
+        stage: u8,
+        amount: u64,
+        cumulative_released: u64,
+        remaining_amount: u64,
+        evidence_hash: vector<u8>,
+        released_at_ms: u64,
     }
 
     /// A document fingerprint bound to the escrow by one of its parties.
@@ -158,6 +181,45 @@ module payproof::escrow {
         clock: &Clock,
         ctx: &mut TxContext,
     ) {
+        let amount = payment.value();
+        create_impl(payment, supplier, arbitrator, order_hash, order_reference, 0, 0, amount,
+            delivery_deadline_ms, inspection_window_ms, clock, ctx);
+    }
+
+    /// Creates an escrow with an agreed three-part release plan. The order deposit is paid
+    /// atomically while the dispatch and delivery balances remain in the shared escrow.
+    public entry fun create_with_milestones<T>(
+        payment: Coin<T>,
+        supplier: address,
+        arbitrator: address,
+        order_hash: vector<u8>,
+        order_reference: String,
+        deposit_amount: u64,
+        dispatch_amount: u64,
+        delivery_amount: u64,
+        delivery_deadline_ms: u64,
+        inspection_window_ms: u64,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ) {
+        create_impl(payment, supplier, arbitrator, order_hash, order_reference, deposit_amount,
+            dispatch_amount, delivery_amount, delivery_deadline_ms, inspection_window_ms, clock, ctx);
+    }
+
+    fun create_impl<T>(
+        payment: Coin<T>,
+        supplier: address,
+        arbitrator: address,
+        order_hash: vector<u8>,
+        order_reference: String,
+        deposit_amount: u64,
+        dispatch_amount: u64,
+        delivery_amount: u64,
+        delivery_deadline_ms: u64,
+        inspection_window_ms: u64,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ) {
         let buyer = ctx.sender();
         let amount = payment.value();
         let now = clock.timestamp_ms();
@@ -167,6 +229,12 @@ module payproof::escrow {
         assert!(order_reference.length() <= MAX_REFERENCE_LENGTH, E_REFERENCE_TOO_LONG);
         assert!(buyer != supplier && buyer != arbitrator && supplier != arbitrator, E_INVALID_PARTIES);
         assert!(delivery_deadline_ms > now && inspection_window_ms > 0, E_INVALID_DEADLINE);
+        assert!(deposit_amount + dispatch_amount + delivery_amount == amount, E_INVALID_RELEASE_PLAN);
+
+        let mut funds = coin::into_balance(payment);
+        if (deposit_amount > 0) {
+            transfer::public_transfer(coin::from_balance(balance::split(&mut funds, deposit_amount), ctx), supplier);
+        };
 
         let escrow = Escrow<T> {
             id: object::new(ctx),
@@ -174,9 +242,13 @@ module payproof::escrow {
             supplier,
             arbitrator,
             total_amount: amount,
+            deposit_amount,
+            dispatch_amount,
+            delivery_amount,
+            released_amount: deposit_amount,
             disputed_amount: 0,
             requested_buyer_refund: 0,
-            funds: coin::into_balance(payment),
+            funds,
             order_hash,
             order_reference,
             opened_at_ms: now,
@@ -184,6 +256,7 @@ module payproof::escrow {
             inspection_window_ms,
             shipped: false,
             shipped_at_ms: 0,
+            dispatch_evidence_hash: vector[],
             status: STATUS_OPEN,
             undisputed_released: false,
             buyer_approved: false,
@@ -205,7 +278,22 @@ module payproof::escrow {
             created_at_ms: now,
             delivery_deadline_ms,
             inspection_window_ms,
+            deposit_amount,
+            dispatch_amount,
+            delivery_amount,
         });
+        if (deposit_amount > 0) {
+            event::emit(MilestoneReleased<T> {
+                escrow_id,
+                supplier,
+                stage: 1,
+                amount: deposit_amount,
+                cumulative_released: deposit_amount,
+                remaining_amount: dispatch_amount + delivery_amount,
+                evidence_hash: vector[],
+                released_at_ms: now,
+            });
+        };
         transfer::share_object(escrow);
     }
 
@@ -219,10 +307,41 @@ module payproof::escrow {
         assert!(ctx.sender() == escrow.supplier, E_UNAUTHORIZED);
         assert!(escrow.status == STATUS_OPEN, E_INVALID_STATE);
         assert!(!escrow.shipped, E_ALREADY_SHIPPED);
+        assert!(escrow.dispatch_amount == 0, E_INVALID_STATE);
         let now = clock.timestamp_ms();
         escrow.shipped = true;
         escrow.shipped_at_ms = now;
-        event::emit(Shipped<T> { escrow_id: object::id(escrow), supplier: escrow.supplier, shipped_at_ms: now });
+        event::emit(Shipped<T> { escrow_id: object::id(escrow), supplier: escrow.supplier, shipped_at_ms: now,
+            evidence_hash: vector[], released_amount: 0, remaining_amount: balance::value(&escrow.funds) });
+    }
+
+    /// Supplier records dispatch evidence and receives the agreed dispatch payment in one transaction.
+    public entry fun mark_shipped_and_release<T>(
+        escrow: &mut Escrow<T>,
+        evidence_hash: vector<u8>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ) {
+        assert!(ctx.sender() == escrow.supplier, E_UNAUTHORIZED);
+        assert!(escrow.status == STATUS_OPEN, E_INVALID_STATE);
+        assert!(!escrow.shipped, E_ALREADY_SHIPPED);
+        assert!(evidence_hash.length() == SHA256_LENGTH, E_INVALID_EVIDENCE_HASH);
+        assert!(balance::value(&escrow.funds) == escrow.dispatch_amount + escrow.delivery_amount, E_FUNDS_NOT_READY);
+        let now = clock.timestamp_ms();
+        let amount = escrow.dispatch_amount;
+        escrow.shipped = true;
+        escrow.shipped_at_ms = now;
+        escrow.dispatch_evidence_hash = evidence_hash;
+        escrow.released_amount = escrow.released_amount + amount;
+        if (amount > 0) {
+            transfer::public_transfer(coin::from_balance(balance::split(&mut escrow.funds, amount), ctx), escrow.supplier);
+        };
+        let remaining = balance::value(&escrow.funds);
+        event::emit(Shipped<T> { escrow_id: object::id(escrow), supplier: escrow.supplier, shipped_at_ms: now,
+            evidence_hash: escrow.dispatch_evidence_hash, released_amount: amount, remaining_amount: remaining });
+        event::emit(MilestoneReleased<T> { escrow_id: object::id(escrow), supplier: escrow.supplier,
+            stage: 2, amount, cumulative_released: escrow.released_amount, remaining_amount: remaining,
+            evidence_hash: escrow.dispatch_evidence_hash, released_at_ms: now });
     }
 
     /// Either party binds a document fingerprint to the escrow. The file stays
@@ -257,7 +376,8 @@ module payproof::escrow {
     ) {
         assert!(ctx.sender() == escrow.buyer, E_UNAUTHORIZED);
         assert!(escrow.status == STATUS_OPEN, E_INVALID_STATE);
-        assert!(disputed_amount > 0 && disputed_amount <= escrow.total_amount, E_INVALID_DISPUTE);
+        let remaining = balance::value(&escrow.funds);
+        assert!(disputed_amount > 0 && disputed_amount <= remaining, E_INVALID_DISPUTE);
         assert!(requested_buyer_refund <= disputed_amount, E_INVALID_DISPUTE);
         escrow.disputed_amount = disputed_amount;
         escrow.requested_buyer_refund = requested_buyer_refund;
@@ -269,7 +389,7 @@ module payproof::escrow {
             requested_buyer_refund,
             opened_at_ms: clock.timestamp_ms(),
         });
-        let undisputed = escrow.total_amount - disputed_amount;
+        let undisputed = remaining - disputed_amount;
         escrow.undisputed_released = true;
         if (undisputed > 0) {
             let payout = coin::from_balance(balance::split(&mut escrow.funds, undisputed), ctx);
@@ -416,6 +536,10 @@ module payproof::escrow {
             supplier,
             arbitrator: _,
             total_amount: _,
+            deposit_amount: _,
+            dispatch_amount: _,
+            delivery_amount: _,
+            released_amount: _,
             disputed_amount: _,
             requested_buyer_refund: _,
             funds,
@@ -426,6 +550,7 @@ module payproof::escrow {
             inspection_window_ms: _,
             shipped: _,
             shipped_at_ms: _,
+            dispatch_evidence_hash: _,
             status: _,
             undisputed_released: _,
             buyer_approved: _,
@@ -483,6 +608,10 @@ module payproof::escrow {
     public fun supplier<T>(escrow: &Escrow<T>): address { escrow.supplier }
     public fun arbitrator<T>(escrow: &Escrow<T>): address { escrow.arbitrator }
     public fun total_amount<T>(escrow: &Escrow<T>): u64 { escrow.total_amount }
+    public fun deposit_amount<T>(escrow: &Escrow<T>): u64 { escrow.deposit_amount }
+    public fun dispatch_amount<T>(escrow: &Escrow<T>): u64 { escrow.dispatch_amount }
+    public fun delivery_amount<T>(escrow: &Escrow<T>): u64 { escrow.delivery_amount }
+    public fun released_amount<T>(escrow: &Escrow<T>): u64 { escrow.released_amount }
     public fun disputed_amount<T>(escrow: &Escrow<T>): u64 { escrow.disputed_amount }
     public fun requested_buyer_refund<T>(escrow: &Escrow<T>): u64 { escrow.requested_buyer_refund }
     public fun funds_amount<T>(escrow: &Escrow<T>): u64 { balance::value(&escrow.funds) }

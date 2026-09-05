@@ -24,6 +24,23 @@ export interface TradeLineItem {
 
 export type TradeInitiatorRole = "buyer" | "supplier";
 
+export interface TradeReleasePlan {
+  depositUnits: string;
+  dispatchUnits: string;
+  deliveryUnits: string;
+}
+
+export interface TradeReleaseRecord {
+  stage: "deposit" | "dispatch" | "delivery";
+  amountUnits: string;
+  cumulativeReleasedUnits: string;
+  remainingUnits: string;
+  transactionDigest: string;
+  verificationStatus: "verified_on_chain" | "external_reference";
+  releasedAt: string;
+  evidenceSha256?: string;
+}
+
 /** Quantities the buyer recorded when inspecting the delivery. */
 export interface TradeInspectionLine {
   lineId: string;
@@ -119,6 +136,9 @@ export interface TradeOrder {
   deliveryDate: string;
   deliveryLocation: string;
   lineItems: TradeLineItem[];
+  /** Exact base-unit allocation accepted with the commercial terms. */
+  releasePlan?: TradeReleasePlan;
+  releaseRecords?: TradeReleaseRecord[];
   status: TradeOrderStatus;
   inviteId?: string;
   inviteExpiresAt?: string;
@@ -207,11 +227,12 @@ export interface FundingInput {
 }
 
 export interface ShipmentInput {
-  carrier?: string;
-  trackingNumber?: string;
-  dispatchedAt?: string;
+  carrier: string;
+  trackingNumber: string;
+  dispatchedAt: string;
   expectedAt?: string;
-  transactionDigest?: string;
+  transactionDigest: string;
+  evidenceSha256: string;
 }
 
 export type DeadlineSettlementKind = "refund_unshipped" | "claim_uninspected";

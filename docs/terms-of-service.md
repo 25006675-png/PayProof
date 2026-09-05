@@ -1,6 +1,6 @@
 # PayProof Platform Terms of Service
 
-**Version 1.0 · Effective 2 September 2026 · Governing law: Malaysia**
+**Version 1.1 · Effective 5 September 2026 · Governing law: Malaysia**
 
 ---
 
@@ -61,16 +61,19 @@ Where a clause below describes commercial behaviour (fees, liability, custody), 
 
 ## 5. Escrow, funding, and settlement
 
-**5.1** The buyer funds an escrow smart contract on Sui. The escrow records the buyer address, the supplier address, the arbitrator address, the order reference, and a hash of the agreed order contents.
+**5.1** The buyer funds an escrow smart contract on Sui. The escrow records the buyer address, the supplier address, the arbitrator address, the order reference, a hash of the agreed order contents, and the exact deposit, dispatch, and delivery allocations confirmed by both parties.
 
-**5.2** **PayProof cannot move your funds.** The escrow releases value in exactly two circumstances:
+**5.2** **PayProof cannot move your funds.** The escrow releases value only through the release plan and settlement instructions confirmed by the parties:
 
-- **(a)** the buyer and the supplier both approve the identical allocation; or
-- **(b)** the appointed arbitrator signs an allocation, which the contract accepts without mutual approval.
+- **(a)** the confirmed order deposit is paid to the supplier when the buyer funds the escrow;
+- **(b)** the dispatch payment is paid when the supplier signs shipment with a 32-byte evidence fingerprint;
+- **(c)** the buyer accepts delivery, or a contract deadline permits an unshipped refund or uninspected supplier claim;
+- **(d)** the buyer and supplier approve an identical disputed allocation; or
+- **(e)** the appointed arbitrator signs a disputed allocation, which the contract accepts without mutual approval.
 
-**5.3** In both cases the contract enforces limits that no party, including PayProof, can override: the refund to the buyer plus the release to the supplier must equal the disputed amount exactly; the buyer's refund can never exceed the refund the buyer originally requested; and funds can only be sent to the buyer and supplier addresses fixed when the escrow was created.
+**5.3** A deposit or dispatch payment is final once released and cannot be clawed back through PayProof. A refund or dispute is limited to the balance still held in escrow. For a dispute, the buyer refund plus supplier release must equal the disputed balance exactly, and the buyer refund cannot exceed the amount originally requested.
 
-**5.4** The undisputed portion of an order may be released to the supplier at any time during a dispute, and only the supplier can trigger that release.
+**5.4** When a buyer opens a claim, the contract releases the undisputed portion of the remaining delivery balance to the supplier and holds only the disputed portion.
 
 **5.5** Where PayProof appoints the arbitrator under clause 6.3, PayProof's arbitrator holds the signing key described in 5.2(b). This is a real power over the disputed amount, bounded by 5.3, and it is disclosed here so you can decide whether to nominate your own arbitrator instead.
 

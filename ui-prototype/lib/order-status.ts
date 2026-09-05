@@ -21,8 +21,8 @@ export const STEPS = ["Confirm", "Fund", "Ship", "Deliver", "Inspect", "Settle"]
 
 /** Version and effective date of the platform terms shown in agreement blocks. */
 export const TERMS = {
-  version: "1.0",
-  effective: "2 September 2026",
+  version: "1.1",
+  effective: "5 September 2026",
   documents: [
     { title: "Terms of Service", href: "/legal/terms" },
     { title: "Dispute Resolution Policy", href: "/legal/dispute-policy" },

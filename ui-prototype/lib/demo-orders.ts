@@ -47,6 +47,8 @@ export type OrderDocument = {
   /** Path in the backend document store. Present when both parties can open the file. */
   storagePath?: string;
   remote?: boolean;
+  /** The Sui transaction that bound this file's fingerprint to the escrow. */
+  anchor?: { transactionDigest: string; verificationStatus: "verified_on_chain" | "external_reference" };
   /** Public demo asset that can be opened without the private document API. */
   url?: string;
 };
@@ -202,6 +204,7 @@ export type DemoOrder = {
   items: DemoOrderLine[];
   status: OrderStatus;
   value: number;
+  releasePlan?: { depositValue: number; dispatchValue: number; deliveryValue: number };
   delivery: string;
   deliveryLocation: string;
   settlementAsset: "Testnet SUI" | "Testnet USDC";

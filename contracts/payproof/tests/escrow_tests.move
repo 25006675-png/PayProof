@@ -83,6 +83,50 @@ module payproof::escrow_tests {
     }
 
     #[test]
+    fun milestone_plan_releases_deposit_dispatch_and_delivery_without_overpaying() {
+        let mut scenario = ts::begin(BUYER);
+        scenario.create_system_objects();
+        let payment = coin::mint_for_testing<TestUsdc>(TOTAL, scenario.ctx());
+        scenario.with_shared!<Clock>(|clock, scenario| {
+            escrow::create_with_milestones(
+                payment, SUPPLIER, ARBITRATOR, order_hash(), string::utf8(b"ORDER-MILESTONE"),
+                20_000, 40_000, 40_000, DELIVERY_DEADLINE_MS, INSPECTION_WINDOW_MS, clock, scenario.ctx(),
+            );
+        });
+        let create_effects = scenario.next_tx(BUYER);
+        assert_eq!(create_effects.num_user_events(), 2);
+        scenario.with_shared!<Escrow<TestUsdc>>(|escrow, _scenario| {
+            assert_eq!(escrow::deposit_amount(escrow), 20_000);
+            assert_eq!(escrow::dispatch_amount(escrow), 40_000);
+            assert_eq!(escrow::delivery_amount(escrow), 40_000);
+            assert_eq!(escrow::released_amount(escrow), 20_000);
+            assert_eq!(escrow::funds_amount(escrow), 80_000);
+        });
+        take_coin(&mut scenario, SUPPLIER, 20_000);
+        scenario.with_shared!<Escrow<TestUsdc>>(|escrow, scenario| {
+            scenario.with_shared!<Clock>(|clock, scenario| {
+                escrow::mark_shipped_and_release(escrow, evidence_hash(), clock, scenario.ctx());
+            });
+        });
+        let ship_effects = scenario.next_tx(SUPPLIER);
+        assert_eq!(ship_effects.num_user_events(), 2);
+        scenario.with_shared!<Escrow<TestUsdc>>(|escrow, _scenario| {
+            assert_eq!(escrow::released_amount(escrow), 60_000);
+            assert_eq!(escrow::funds_amount(escrow), 40_000);
+        });
+        take_coin(&mut scenario, SUPPLIER, 40_000);
+        scenario.next_tx(BUYER);
+        let escrow = scenario.take_shared<Escrow<TestUsdc>>();
+        scenario.with_shared!<Clock>(|clock, scenario| {
+            escrow::release_full(escrow, clock, scenario.ctx());
+        });
+        scenario.next_tx(BUYER);
+        take_coin(&mut scenario, SUPPLIER, 40_000);
+        take_receipt(&mut scenario, 0, 0, 40_000);
+        scenario.end();
+    }
+
+    #[test]
     fun opening_a_dispute_pays_the_undisputed_value_in_the_same_transaction() {
         let mut scenario = ts::begin(BUYER);
         scenario.create_system_objects();

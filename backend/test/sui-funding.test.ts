@@ -68,10 +68,11 @@ describe("Sui funding verifier", () => {
   });
 
   it("verifies the supplier's Shipped event", async () => {
-    const verifier = new GrpcSuiFundingVerifier({ packageId: PACKAGE, client: readerOf(transaction(OTHER_DIGEST, [event("Shipped", SUPPLIER, { escrow_id: ESCROW, supplier: SUPPLIER, shipped_at_ms: "1" })])) });
-    await expect(verifier.verifyShipment(fundedOrder(), OTHER_DIGEST)).resolves.toMatchObject({ checkpoint: "42" });
-    const wrongSigner = new GrpcSuiFundingVerifier({ packageId: PACKAGE, client: readerOf(transaction(OTHER_DIGEST, [event("Shipped", BUYER, { escrow_id: ESCROW, supplier: SUPPLIER, shipped_at_ms: "1" })])) });
-    await expect(wrongSigner.verifyShipment(fundedOrder(), OTHER_DIGEST)).rejects.toMatchObject({ code: "SUI_FUNDING_VERIFICATION_FAILED" });
+    const shipment = { escrow_id: ESCROW, supplier: SUPPLIER, shipped_at_ms: "1", evidence_hash: Array.from({ length: 32 }, () => 3), released_amount: "0", remaining_amount: "100000" };
+    const verifier = new GrpcSuiFundingVerifier({ packageId: PACKAGE, client: readerOf(transaction(OTHER_DIGEST, [event("Shipped", SUPPLIER, shipment)])) });
+    await expect(verifier.verifyShipment(fundedOrder(), OTHER_DIGEST, FILE_HASH)).resolves.toMatchObject({ checkpoint: "42", releasedUnits: "0", remainingUnits: "100000" });
+    const wrongSigner = new GrpcSuiFundingVerifier({ packageId: PACKAGE, client: readerOf(transaction(OTHER_DIGEST, [event("Shipped", BUYER, shipment)])) });
+    await expect(wrongSigner.verifyShipment(fundedOrder(), OTHER_DIGEST, FILE_HASH)).rejects.toMatchObject({ code: "SUI_FUNDING_VERIFICATION_FAILED" });
   });
 
   it("verifies an evidence anchor only when the on-chain hash matches the file", async () => {

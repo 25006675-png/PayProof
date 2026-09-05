@@ -5,7 +5,7 @@ import { agreementClauses, loadPolicyCorpus, parsePolicyClauses } from "../src/p
 describe("dispute policy corpus", () => {
   it("parses the published policy into quotable clauses", async () => {
     const corpus = await loadPolicyCorpus(config.disputePolicyFile);
-    expect(corpus.version).toBe("1.0");
+    expect(corpus.version).toBe("1.1");
     expect(corpus.clauses.length).toBeGreaterThan(50);
     for (const clause of corpus.clauses) {
       expect(clause.id).toMatch(/^DP-\d+\.\d+$/);

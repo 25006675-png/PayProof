@@ -50,6 +50,7 @@ const verifier = new DemoAwareTokenVerifier(productionVerifier, config.demoMode)
 const googleClientIds = config.googleOauthClientIds();
 const proverUrl = config.zkLoginProverUrl();
 const enokiKey = config.enokiPrivateKey();
+const legacyEscrowPackageIds = (process.env.SUI_LEGACY_ESCROW_PACKAGE_IDS ?? "").split(",").map((value) => value.trim()).filter(Boolean);
 // Enoki hosts the prover and the salt, so it wins when configured. The raw prover
 // stays as the fallback for a locally hosted setup.
 const zkLogin = identity && googleClientIds.length > 0 && (enokiKey || proverUrl)
@@ -61,7 +62,7 @@ const zkLogin = identity && googleClientIds.length > 0 && (enokiKey || proverUrl
     )
   : undefined;
 if (enokiKey) console.log(`zkLogin proofs issued by Enoki on ${config.suiNetwork}`);
-const sponsor = enokiKey ? new EnokiSponsor(enokiKey, config.suiNetwork, config.suiEscrowPackageId) : undefined;
+const sponsor = enokiKey ? new EnokiSponsor(enokiKey, config.suiNetwork, config.suiEscrowPackageId, legacyEscrowPackageIds) : undefined;
 if (sponsor) console.log(`Gas sponsored by Enoki for ${config.suiEscrowPackageId}::escrow`);
 let mediator: MediationOrchestrator | undefined;
 if (process.env.GEMINI_API_KEY) {
@@ -80,7 +81,7 @@ const tradeStore = config.store === "supabase"
   : new MemoryTradeStore();
 const organizations = new OrganizationService(config.store === "supabase"
   ? new SupabaseOrganizationStore(config.supabaseUrl(), config.supabaseSecretKey())
-  : new MemoryOrganizationStore());
+  : new MemoryOrganizationStore(), tradeStore);
 const smtpHost = config.smtpHost();
 const smtpUser = config.smtpUser();
 const smtpPassword = config.smtpPassword();
@@ -107,7 +108,9 @@ const settlementVerifier = config.suiEscrowVerifierEnabled
   ? createSuiSettlementVerifier({ packageId: config.suiEscrowPackageId, network: config.suiNetwork, baseUrl: config.suiRpcUrl })
   : undefined;
 const fundingVerifier = config.suiEscrowVerifierEnabled
-  ? new GrpcSuiFundingVerifier({ packageId: config.suiEscrowPackageId, network: config.suiNetwork, baseUrl: config.suiRpcUrl })
+  ? new GrpcSuiFundingVerifier({ packageId: config.suiEscrowPackageId,
+      legacyPackageIds: legacyEscrowPackageIds,
+      network: config.suiNetwork, baseUrl: config.suiRpcUrl })
   : undefined;
 const documentStore = config.store === "supabase"
   ? new SupabaseDocumentStore(config.supabaseUrl(), config.supabaseSecretKey(), config.documentsBucket)

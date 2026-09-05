@@ -45,6 +45,7 @@ const tradeOrderSchema = z.object({
   buyerEmail: z.string().email().optional(), buyerName: z.string().max(256).optional(),
   arbitratorId: uuid, assetType: z.string().min(1).max(256), amountUnits: amount, description: z.string().min(1).max(20_000),
   deliveryDate: z.string().min(1).max(128), deliveryLocation: z.string().min(1).max(500), lineItems: z.array(lineItemSchema).min(1).max(100),
+  releasePlan: z.object({ depositUnits: amount, dispatchUnits: amount, deliveryUnits: amount }).optional(),
   buyerOrganizationId: uuid.optional(), supplierOrganizationId: uuid.optional(),
 }).refine((value) => (value.initiatorRole === "supplier" ? Boolean(value.buyerEmail) : Boolean(value.supplierEmail)), {
   message: "A buyer-initiated order needs supplierEmail; a supplier-initiated order needs buyerEmail",
@@ -54,9 +55,9 @@ const inspectionSchema = z.object({
   note: z.string().max(20_000).optional(),
 });
 const shipmentSchema = z.object({
-  carrier: z.string().max(128).optional(), trackingNumber: z.string().max(128).optional(),
-  dispatchedAt: z.string().max(64).optional(), expectedAt: z.string().max(64).optional(),
-  transactionDigest: z.string().min(1).max(128).optional(),
+  carrier: z.string().min(1).max(128), trackingNumber: z.string().min(1).max(128),
+  dispatchedAt: z.string().min(1).max(64), expectedAt: z.string().max(64).optional(),
+  transactionDigest: z.string().min(1).max(128), evidenceSha256: z.string().regex(/^[0-9a-f]{64}$/),
 });
 const deliverySchema = z.object({ reference: z.string().max(128).optional() });
 const acceptDeliverySchema = z.object({
@@ -142,6 +143,9 @@ export function createApp(
       return c.json(await identity.verifyWalletChallenge(body));
     });
   }
+  if (organizations) {
+    app.get("/public/organizations/:slug/trust", async (c) => c.json(await organizations.publicTrustProfile(c.req.param("slug"))));
+  }
   app.use("/v1/*", async (c, next) => {
     const header = c.req.header("authorization") ?? "";
     if (!header.startsWith("Bearer ")) throw new DomainError("UNAUTHORIZED", "Bearer token required", 401);
@@ -172,6 +176,11 @@ export function createApp(
     app.post("/v1/organizations", async (c) => {
       const body = z.object({ name: z.string().min(2).max(160) }).parse(await c.req.json());
       return c.json(await organizations.create(c.get("actor"), body.name), 201);
+    });
+    app.get("/v1/organizations/:id/trust-profile", async (c) => c.json(await organizations.trustPreview(c.get("actor"), c.req.param("id"))));
+    app.patch("/v1/organizations/:id/trust-profile", async (c) => {
+      const body = z.object({ published: z.boolean() }).parse(await c.req.json());
+      return c.json(await organizations.setTrustPublished(c.get("actor"), c.req.param("id"), body.published));
     });
   }
   if (zkLogin) {
@@ -235,6 +244,10 @@ export function createApp(
         "content-disposition": `inline; filename="${safeName}"`,
         "cache-control": "private, no-store",
       });
+    });
+    app.patch("/v1/orders/:id/documents/:documentId/anchor", async (c) => {
+      const body = z.object({ transactionDigest: z.string().min(1) }).parse(await c.req.json().catch(() => ({})));
+      return c.json(await trades.anchorDocument(c.req.param("id"), c.get("actor"), c.req.param("documentId"), body.transactionDigest));
     });
     app.post("/v1/orders/:id/acceptance", async (c) => c.json(await trades.acceptDelivery(c.req.param("id"), c.get("actor"), acceptDeliverySchema.parse(await c.req.json()))));
     app.post("/v1/orders/:id/dispute", async (c) => c.json(await trades.openDispute(c.req.param("id"), c.get("actor"), openTradeDisputeSchema.parse(await c.req.json()))));

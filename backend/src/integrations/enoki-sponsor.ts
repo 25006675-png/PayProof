@@ -4,7 +4,9 @@ import { DomainError } from "../domain/types.js";
  *  refused, so the sponsor cannot be used as a general purpose faucet. */
 const ESCROW_ENTRY_FUNCTIONS = [
   "create",
+  "create_with_milestones",
   "mark_shipped",
+  "mark_shipped_and_release",
   "anchor_evidence",
   "open_dispute",
   "release_full",
@@ -25,10 +27,12 @@ export class EnokiSponsor {
     private readonly apiKey: string,
     private readonly network: string,
     packageId: string,
+    legacyPackageIds: string[] = [],
     private readonly baseUrl = "https://api.enoki.mystenlabs.com/v1",
   ) {
+    const escrowPackages = [packageId, ...legacyPackageIds];
     this.allowedMoveCallTargets = [
-      ...ESCROW_ENTRY_FUNCTIONS.map((name) => `${packageId}::escrow::${name}`),
+      ...escrowPackages.flatMap((id) => ESCROW_ENTRY_FUNCTIONS.map((name) => `${id}::escrow::${name}`)),
       // Direct payment with an on-chain receipt, used by the wallet's pay-by-QR flow.
       `${packageId}::payproof::pay`,
     ];

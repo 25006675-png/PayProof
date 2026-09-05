@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { OrganizationService } from "../src/service/organization-service.js";
 import { MemoryOrganizationStore } from "../src/store/organization-store.js";
+import { MemoryTradeStore } from "../src/store/trade-store.js";
 
 describe("OrganizationService", () => {
   it("creates one stable default organization with explicit capabilities", async () => {
@@ -31,5 +32,28 @@ describe("OrganizationService", () => {
       canSupply: true,
     });
     await expect(service.renamePrimary(actor, " ")).rejects.toMatchObject({ code: "INVALID_ORGANIZATION_NAME", status: 400 });
+  });
+
+  it("publishes only verified aggregate trade facts after an owner opts in", async () => {
+    const organizations = new MemoryOrganizationStore();
+    const trades = new MemoryTradeStore();
+    const service = new OrganizationService(organizations, trades);
+    const actor = { id: "account-1", name: "FreshSource Foods", email: "owner@example.com" };
+    const membership = (await service.workspace(actor)).primary;
+    await trades.createOrder({
+      id: crypto.randomUUID(), reference: "TRUST-1", buyerId: "buyer", buyerOrganizationId: crypto.randomUUID(),
+      supplierId: actor.id, supplierOrganizationId: membership.organizationId, arbitratorId: "arbitrator",
+      supplierEmail: actor.email, supplierName: membership.organizationName, assetType: "USDC", amountUnits: "100",
+      orderHash: "07".repeat(32), description: "Goods", deliveryDate: "2026-09-05", deliveryLocation: "PJ",
+      lineItems: [{ id: "1", description: "Goods", quantity: "1", unit: "lot", unitPriceUnits: "100" }],
+      releasePlan: { depositUnits: "20", dispatchUnits: "40", deliveryUnits: "40" }, status: "settled", version: 4,
+      funding: { packageId: "0x1", escrowObjectId: "0x2", transactionDigest: "fund", buyerAddress: "0xa", supplierAddress: "0xb", arbitratorAddress: "0xc", verificationStatus: "verified_on_chain", fundedAt: "2026-09-01T00:00:00.000Z" },
+      settlement: { buyerUnits: "0", supplierUnits: "100", verifiedOnChain: true, source: "full_acceptance" },
+      createdAt: "2026-09-01T00:00:00.000Z", updatedAt: "2026-09-05T00:00:00.000Z",
+    });
+    await expect(service.publicTrustProfile(membership.organizationSlug)).rejects.toMatchObject({ code: "NOT_FOUND" });
+    const published = await service.setTrustPublished(actor, membership.organizationId, true);
+    expect(published).toMatchObject({ published: true, newOnPayProof: true, supplier: { fundedOrders: 1, settledOrders: 1, disputes: 0 } });
+    expect((await service.publicTrustProfile(membership.organizationSlug)).supplier.disputeFreeRate).toBeUndefined();
   });
 });

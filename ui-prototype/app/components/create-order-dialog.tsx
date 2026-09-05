@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { AgreementBlock, ConsentDialog, FileField, HelpHint, Notice } from "@/app/components/app-shell";
 import { buildDocument, extractPurchaseOrder } from "@/app/components/order-documents";
+import { ReleasePlanBar } from "@/app/components/release-plan";
 import { type DemoOrder, type ExtractedPurchaseOrder, type OrderDocument, formatOrderMoney as money, itemSummary } from "@/lib/demo-orders";
 import { createLiveOrder } from "@/lib/live-orders";
 import { loadExtras, saveExtras } from "@/lib/local-order-extras";
@@ -16,6 +17,7 @@ type DraftLine = { id: number; description: string; quantity: number; unit: stri
 const blankLine = (id: number): DraftLine => ({ id, description: "", quantity: 1, unit: "units", unitPrice: 0 });
 
 export function CreateOrderDialog({ open, onOpenChange, onCreate, profile, company }: { open: boolean; onOpenChange: (open: boolean) => void; onCreate: (order: DemoOrder) => void; profile?: WorkspaceProfile; company: string }) {
+  const [page, setPage] = useState<1 | 2>(1);
   const [role, setRole] = useState<"buyer" | "supplier">("buyer");
   const [counterpartyName, setCounterpartyName] = useState("");
   const [counterpartyEmail, setCounterpartyEmail] = useState("");
@@ -36,15 +38,20 @@ export function CreateOrderDialog({ open, onOpenChange, onCreate, profile, compa
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
   const [imported, setImported] = useState<ExtractedPurchaseOrder | null>(null);
+  const [depositPercent, setDepositPercent] = useState(20);
+  const [dispatchPercent, setDispatchPercent] = useState(40);
 
   const buying = role === "buyer";
   const total = items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
   const emailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(counterpartyEmail.trim());
-  const canSend = Boolean(accepted && counterpartyName.trim() && emailValid && delivery && location.trim() && total > 0 && items.every((item) => item.description.trim() && item.quantity > 0 && item.unitPrice > 0));
+  const detailsValid = Boolean(counterpartyName.trim() && emailValid && delivery && location.trim() && total > 0 && items.every((item) => item.description.trim() && item.quantity > 0 && item.unitPrice > 0));
+  const canSend = Boolean(accepted && detailsValid);
+  const deliveryPercent = 100 - depositPercent - dispatchPercent;
+  const releaseValue = (percent: number) => Math.round(total * percent) / 100;
 
   const reset = () => {
     setRole("buyer"); setCounterpartyName(""); setCounterpartyEmail(""); setReference(""); setDelivery(""); setLocation("");
-    setItems([blankLine(1)]); setAgreementFile(null); setAccepted(false); setCreated(null); setCopied(false); setInviteUrl(""); setError(""); setDeliveryResult(undefined); setImported(null); setImportFile(null); setImportError("");
+    setItems([blankLine(1)]); setAgreementFile(null); setAccepted(false); setCreated(null); setCopied(false); setInviteUrl(""); setError(""); setDeliveryResult(undefined); setImported(null); setImportFile(null); setImportError(""); setPage(1); setDepositPercent(20); setDispatchPercent(40);
   };
   const changeOpen = (next: boolean) => { if (!next) reset(); onOpenChange(next); };
   const updateLine = (id: number, field: keyof DraftLine, value: string | number) => setItems((current) => current.map((item) => item.id === id ? { ...item, [field]: value } : item));
@@ -92,6 +99,7 @@ export function CreateOrderDialog({ open, onOpenChange, onCreate, profile, compa
       buyer: buying ? company : counterpartyName.trim(), supplier: buying ? counterpartyName.trim() : company, item: itemSummary(lines()), items: lines(),
       status: buying ? "awaiting_supplier" : "awaiting_buyer", value: total,
       delivery, deliveryLocation: location.trim(), settlementAsset: "Testnet USDC", currency: "USDC", inviteToken: crypto.randomUUID(), version: 1,
+      releasePlan: { depositValue: releaseValue(depositPercent), dispatchValue: releaseValue(dispatchPercent), deliveryValue: Math.max(0, total - releaseValue(depositPercent) - releaseValue(dispatchPercent)) },
       source: "sample", documents, events: [{ at: new Date().toISOString(), label: "Order created", detail: `${company} issued the purchase order${buying ? "" : " as supplier"}.` }, ...documents.map((document) => ({ at: document.uploadedAt, label: "Document attached", detail: document.name }))],
     };
   };
@@ -109,7 +117,7 @@ export function CreateOrderDialog({ open, onOpenChange, onCreate, profile, compa
       }
       if (!profile) throw new Error("Your workspace is still loading. Try again in a moment.");
       const session = loadSession();
-      const result = await createLiveOrder({ reference: reference.trim(), initiatorRole: role, counterpartyName: counterpartyName.trim(), counterpartyEmail: counterpartyEmail.trim(), deliveryDate: delivery, deliveryLocation: location.trim(), organizationId: profile.primary.organizationId, items: lines(), supplierWalletAddress: buying ? undefined : session?.suiAddress });
+      const result = await createLiveOrder({ reference: reference.trim(), initiatorRole: role, counterpartyName: counterpartyName.trim(), counterpartyEmail: counterpartyEmail.trim(), deliveryDate: delivery, deliveryLocation: location.trim(), organizationId: profile.primary.organizationId, items: lines(), supplierWalletAddress: buying ? undefined : session?.suiAddress, releasePercentages: { deposit: depositPercent, dispatch: dispatchPercent } });
       let order = result.order;
       const documents = await attachments();
       if (documents.length) {
@@ -162,9 +170,15 @@ export function CreateOrderDialog({ open, onOpenChange, onCreate, profile, compa
           <>
             <DialogHeader>
               <DialogTitle>New purchase order</DialogTitle>
-              <DialogDescription>Set the parties and the shared terms. The other company confirms before escrow can be funded.</DialogDescription>
+              <DialogDescription>{page === 1 ? "Set the parties, delivery terms and line items." : "Choose when the supplier receives each part of the order value."}</DialogDescription>
             </DialogHeader>
 
+            <ol className="po-pages" aria-label="Purchase order steps">
+              <li className={page === 1 ? "po-page-current" : "po-page-done"}><span>{page === 1 ? "1" : <Check size={13} aria-hidden="true" />}</span>Order details</li>
+              <li className={page === 2 ? "po-page-current" : ""}><span>2</span>Release plan</li>
+            </ol>
+
+            <div className="po-page" hidden={page !== 1}>
             <fieldset className="form-section">
               <legend>Your role on this order</legend>
               <div className="role-choice" role="radiogroup" aria-label="Your role">
@@ -231,17 +245,57 @@ export function CreateOrderDialog({ open, onOpenChange, onCreate, profile, compa
               <span>Order value, settled in Testnet USDC</span>
               <strong>{money(total)} <small>USDC</small></strong>
             </div>
+            </div>
+
+            <div className="po-page" hidden={page !== 2}>
+              <fieldset className="form-section release-plan-fieldset">
+                <legend>Payment allocation</legend>
+                <p className="release-intro">Both companies confirm this allocation before the buyer funds the order. Money released at an earlier stage cannot be reclaimed through PayProof.</p>
+                <div className="release-allocation">
+                  <ReleasePlanBar total={total || 1} currency="USDC"
+                    values={{ deposit: releaseValue(depositPercent), dispatch: releaseValue(dispatchPercent), delivery: Math.max(0, total - releaseValue(depositPercent) - releaseValue(dispatchPercent)) }}
+                    slider={<>
+                      <input className="release-range release-range-deposit" aria-label="Adjust end of order deposit" type="range" min={0} max={100 - dispatchPercent} value={depositPercent} onChange={(event) => setDepositPercent(Number(event.target.value))} />
+                      <input className="release-range release-range-dispatch" aria-label="Adjust end of dispatch payment" type="range" min={depositPercent} max={100} value={depositPercent + dispatchPercent} onChange={(event) => setDispatchPercent(Number(event.target.value) - depositPercent)} />
+                    </>} />
+                </div>
+                <div className="release-controls">
+                  <label>
+                    <span><strong>Order deposit</strong><small>Released when escrow is funded</small></span>
+                    <span className="percent-input"><Input aria-label="Order deposit percentage" type="number" min={0} max={100 - dispatchPercent} step={1} value={depositPercent} onChange={(event) => setDepositPercent(Math.max(0, Math.min(100 - dispatchPercent, Number(event.target.value) || 0)))} /><b>%</b></span>
+                    <output>{money(releaseValue(depositPercent))} USDC</output>
+                  </label>
+                  <label>
+                    <span><strong>Dispatch payment</strong><small>Released with anchored shipping evidence</small></span>
+                    <span className="percent-input"><Input aria-label="Dispatch payment percentage" type="number" min={0} max={100 - depositPercent} step={1} value={dispatchPercent} onChange={(event) => setDispatchPercent(Math.max(0, Math.min(100 - depositPercent, Number(event.target.value) || 0)))} /><b>%</b></span>
+                    <output>{money(releaseValue(dispatchPercent))} USDC</output>
+                  </label>
+                  <div className="release-final">
+                    <span><strong>Delivery balance</strong><small>Released after acceptance, timeout, or dispute settlement</small></span>
+                    <b>{deliveryPercent}%</b>
+                    <output>{money(Math.max(0, total - releaseValue(depositPercent) - releaseValue(dispatchPercent)))} USDC</output>
+                  </div>
+                </div>
+                {deliveryPercent < 20 && <Notice tone="warning">Only {deliveryPercent}% remains protected for delivery issues. Earlier releases are final and reduce the maximum refund available through PayProof.</Notice>}
+                {depositPercent === 0 && dispatchPercent === 0 && <Notice tone="info">This matches PayProof’s original single-release flow: the full order value stays secured until delivery.</Notice>}
+              </fieldset>
 
             <AgreementBlock company={company} accepted={accepted} onChange={setAccepted}
               clauses={[
                 `${company} issues this purchase order as ${buying ? "buyer" : "supplier"} and is bound by the shared terms once ${counterpartyName.trim() || `the ${otherRole}`} confirms them.`,
-                buying ? "After confirmation you fund the full order value into the Sui escrow contract. ProofPay cannot withdraw those funds." : "After confirmation the buyer funds the full order value into the Sui escrow contract, released to you when the delivery is accepted.",
-                "Release follows the inspection result and the Dispute Resolution Policy. Only the accepted value is released; any disputed amount stays in escrow until the claim is settled.",
+                `${depositPercent}% is released when the confirmed order is funded, ${dispatchPercent}% when the supplier signs shipment with evidence, and ${deliveryPercent}% remains for delivery.`,
+                "Released amounts are final. A refund or dispute can apply only to the delivery balance still held in escrow.",
               ]} />
+            </div>
             {error && <Notice tone="error">{error}</Notice>}
             <DialogFooter>
-              <Button variant="outline" disabled={saving} onClick={() => changeOpen(false)}>Cancel</Button>
-              <Button className="btn-primary" disabled={!canSend || saving} onClick={() => void send()}>{saving ? "Sending" : `Send for ${otherRole} confirmation`}{!saving && <ArrowRight size={14} aria-hidden="true" />}</Button>
+              {page === 1 ? <>
+                <Button variant="outline" disabled={saving} onClick={() => changeOpen(false)}>Cancel</Button>
+                <Button className="btn-primary" disabled={!detailsValid} onClick={() => setPage(2)}>Set release plan<ArrowRight size={14} aria-hidden="true" /></Button>
+              </> : <>
+                <Button variant="outline" disabled={saving} onClick={() => setPage(1)}>Back to order details</Button>
+                <Button className="btn-primary" disabled={!canSend || saving} onClick={() => void send()}>{saving ? "Sending" : `Send for ${otherRole} confirmation`}{!saving && <ArrowRight size={14} aria-hidden="true" />}</Button>
+              </>}
             </DialogFooter>
 
             <ConsentDialog open={importOpen} onOpenChange={setImportOpen} company={company} title="Import purchase order from file"

@@ -4,6 +4,7 @@ export interface TradeStore {
   createOrder(order: TradeOrder): Promise<void>;
   getOrder(id: string): Promise<TradeOrder | undefined>;
   listOrders(actorId: string, organizationIds?: string[]): Promise<TradeOrder[]>;
+  listForOrganization(organizationId: string): Promise<TradeOrder[]>;
   saveOrder(order: TradeOrder, expectedVersion: number): Promise<void>;
   createInvite(invite: TradeInvite): Promise<void>;
   getInviteByTokenHash(tokenHash: string): Promise<TradeInvite | undefined>;
@@ -31,6 +32,13 @@ export class MemoryTradeStore implements TradeStore {
       .filter((order) => order.buyerId === actorId || order.supplierId === actorId || order.arbitratorId === actorId
         || organizationIds.includes(order.buyerOrganizationId ?? "")
         || organizationIds.includes(order.supplierOrganizationId ?? ""))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .map((order) => structuredClone(order));
+  }
+
+  async listForOrganization(organizationId: string): Promise<TradeOrder[]> {
+    return [...this.orders.values()]
+      .filter((order) => order.buyerOrganizationId === organizationId || order.supplierOrganizationId === organizationId)
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
       .map((order) => structuredClone(order));
   }

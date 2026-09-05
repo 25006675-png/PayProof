@@ -1,6 +1,6 @@
 # PayProof Dispute Resolution Policy
 
-**Version 1.0 · Effective 2 September 2026**
+**Version 1.1 · Effective 5 September 2026**
 
 This Policy is part of the [PayProof Platform Terms of Service](./terms-of-service.md). It is the rulebook PayProof applies to a dispute over a funded order, and it is the only source of general rules the platform's automated analysis is permitted to apply when your own agreement is silent.
 
@@ -19,6 +19,8 @@ Every clause is numbered so it can be quoted exactly. When the platform applies 
 **DP-1.4** Where the agreement is silent on a question, the rules in DP-7 apply.
 
 **DP-1.5** This Policy applies only to funds held in a PayProof escrow. It does not resolve claims for consequential loss, reputational harm, or any amount beyond the escrow balance.
+
+**DP-1.6** An order may release a confirmed deposit and dispatch payment before delivery. Those releases are final within PayProof. This Policy applies only to the delivery balance still held when the claim is opened.
 
 ## DP-2 · Timing
 
@@ -158,4 +160,5 @@ These rules apply where the agreement between the parties does not answer the qu
 
 ## Version history
 
+- **1.1 — 5 September 2026.** Added confirmed milestone releases and clarified that disputes are limited to the remaining delivery balance.
 - **1.0 — 2 September 2026.** First published version.

@@ -10,6 +10,16 @@ import { ARBITRATOR, BUYER, SUPPLIER, controlledContext } from "./fixtures.js";
 const auth = (token: string) => ({ authorization: `Bearer ${token}`, "content-type": "application/json" });
 
 describe("trade lifecycle API", () => {
+  it("stores an exact milestone allocation and rejects plans that do not conserve the order value", async () => {
+    const control = controlledContext();
+    const trades = new TradeService(new MemoryTradeStore(), new DisputeService(new MemoryDisputeStore(), control.ctx), control.ctx);
+    const buyer = { id: BUYER, email: "buyer-plan@example.com", name: "Buyer" };
+    const base = { reference: "PLAN-1", supplierEmail: "supplier-plan@example.com", arbitratorId: ARBITRATOR, assetType: "USDC", amountUnits: "100000", description: "Goods", deliveryDate: "2026-09-20", deliveryLocation: "PJ", lineItems: [{ id: "1", description: "Goods", quantity: "1", unit: "lot", unitPriceUnits: "100000" }] };
+    const created = await trades.createOrder({ ...base, releasePlan: { depositUnits: "20000", dispatchUnits: "40000", deliveryUnits: "40000" } }, buyer);
+    expect(created.releasePlan).toEqual({ depositUnits: "20000", dispatchUnits: "40000", deliveryUnits: "40000" });
+    await expect(trades.createOrder({ ...base, reference: "PLAN-2", releasePlan: { depositUnits: "20000", dispatchUnits: "40000", deliveryUnits: "39999" } }, buyer))
+      .rejects.toMatchObject({ code: "INVALID_RELEASE_PLAN", status: 400 });
+  });
   it("issues a demo Google session and completes invite, funding, and dispute transitions", async () => {
     const control = controlledContext();
     const fallback: TokenVerifier = { verify: async (token) => ({ id: token }) };
@@ -61,7 +71,7 @@ describe("trade lifecycle API", () => {
     const replacementFunding = await app.request(`/v1/orders/${order.id}/funding`, { method: "POST", headers: buyerHeaders, body: JSON.stringify({ ...fundingBody, escrowObjectId: `0x${"e".repeat(64)}` }) });
     expect(replacementFunding.status).toBe(409);
 
-    expect((await app.request(`/v1/orders/${order.id}/shipment`, { method: "POST", headers: auth(supplierSession.accessToken) })).status).toBe(200);
+    expect((await app.request(`/v1/orders/${order.id}/shipment`, { method: "POST", headers: auth(supplierSession.accessToken), body: JSON.stringify({ carrier: "GDEX", trackingNumber: "GD-API-1", dispatchedAt: "2026-09-01T00:00:00.000Z", transactionDigest: "shipment-reference", evidenceSha256: "03".repeat(32) }) })).status).toBe(200);
     expect((await app.request(`/v1/orders/${order.id}/delivery`, { method: "POST", headers: buyerHeaders })).status).toBe(200);
 
     const opened = await app.request(`/v1/orders/${order.id}/dispute`, { method: "POST", headers: buyerHeaders, body: JSON.stringify({
@@ -124,7 +134,7 @@ describe("trade lifecycle API", () => {
     const invite = await trades.createInvite(order.id, buyer);
     await trades.acceptInvite(invite.inviteToken!, supplier, { email: supplier.email, name: supplier.name });
     await trades.recordFunding(order.id, buyer, { packageId: "0x1", escrowObjectId: "0x2", transactionDigest: "funding-direct", buyerAddress: "0xa", supplierAddress: "0xb", arbitratorAddress: "0xc" });
-    await trades.markShipment(order.id, supplier);
+    await trades.markShipment(order.id, supplier, { carrier: "GDEX", trackingNumber: "DIRECT-1", dispatchedAt: "2026-09-01T00:00:00.000Z", transactionDigest: "ship-direct", evidenceSha256: "03".repeat(32) });
     await trades.markDelivered(order.id, buyer);
     const opened = await trades.openDispute(order.id, buyer, { disputeTransactionDigest: "dispute-direct", disputedUnits: "30000", requestedBuyerUnits: "20000", claim: "Direct agreement claim", evidenceStatement: "Buyer evidence", negotiationDeadline: "2026-09-03T00:00:00.000Z" });
     const agreed = await disputes.respond(opened.dispute.id, supplier, { agrees: true });
@@ -228,7 +238,7 @@ describe("trade lifecycle API", () => {
     expect(confirmed.status).toBe("supplier_confirmed");
     expect(confirmed.buyerId).toBe(BUYER);
     expect(confirmed.buyerEmail).toBe(buyer.email);
-    expect(confirmed.confirmation).toMatchObject({ confirmedBy: BUYER, confirmedRole: "buyer", termsVersion: "1.0", orderVersion: 1 });
+    expect(confirmed.confirmation).toMatchObject({ confirmedBy: BUYER, confirmedRole: "buyer", termsVersion: "1.1", orderVersion: 1 });
     expect(await trades.listInvitations(buyer)).toEqual([]);
 
     const funded = await trades.recordFunding(order.id, buyer, {
@@ -255,7 +265,7 @@ describe("trade lifecycle API", () => {
     }, buyer);
     await trades.createInvite(order.id, buyer);
     const confirmed = await trades.acceptInvitation(order.id, supplier);
-    expect(confirmed.confirmation).toMatchObject({ confirmedBy: SUPPLIER, confirmedRole: "supplier", email: supplier.email, termsVersion: "1.0" });
+    expect(confirmed.confirmation).toMatchObject({ confirmedBy: SUPPLIER, confirmedRole: "supplier", email: supplier.email, termsVersion: "1.1" });
   });
 
   it("settles a fully accepted delivery against the release transaction", async () => {
@@ -273,7 +283,7 @@ describe("trade lifecycle API", () => {
     await trades.acceptInvitation(order.id, supplier);
     await trades.recordFunding(order.id, buyer, { packageId: "0x1", escrowObjectId: "0x2", transactionDigest: "fund", buyerAddress: `0x${"a".repeat(64)}`, supplierAddress: `0x${"b".repeat(64)}`, arbitratorAddress: `0x${"c".repeat(64)}` });
     await expect(trades.acceptDelivery(order.id, buyer, { transactionDigest: "release-1" })).rejects.toMatchObject({ code: "INVALID_STATE" });
-    await trades.markShipment(order.id, supplier);
+    await trades.markShipment(order.id, supplier, { carrier: "GDEX", trackingNumber: "ACCEPT-1", dispatchedAt: "2026-09-01T00:00:00.000Z", transactionDigest: "ship-accept", evidenceSha256: "03".repeat(32) });
     await trades.markDelivered(order.id, buyer);
 
     await expect(trades.acceptDelivery(order.id, supplier, { transactionDigest: "release-1" })).rejects.toMatchObject({ code: "FORBIDDEN" });
@@ -339,7 +349,7 @@ describe("trade lifecycle API", () => {
     const deadline = control.ctx.now().getTime() + 5 * 24 * 60 * 60 * 1000;
     const funded = await trades.recordFunding(order.id, buyer, { packageId: "0x1", escrowObjectId: "0x2", transactionDigest: "fund-claim", buyerAddress: "0xa", supplierAddress: "0xb", arbitratorAddress: "0xc", deliveryDeadlineMs: deadline, inspectionWindowMs: 7 * 24 * 60 * 60 * 1000 });
     expect(funded.funding).toMatchObject({ deliveryDeadlineMs: deadline, inspectionWindowMs: 7 * 24 * 60 * 60 * 1000 });
-    const shipped = await trades.markShipment(order.id, supplier, { carrier: "GDEX", trackingNumber: "GD1", transactionDigest: "ship-claim" });
+    const shipped = await trades.markShipment(order.id, supplier, { carrier: "GDEX", trackingNumber: "GD1", dispatchedAt: "2026-09-01T00:00:00.000Z", transactionDigest: "ship-claim", evidenceSha256: "03".repeat(32) });
     expect(shipped.shipment).toMatchObject({ carrier: "GDEX", transactionDigest: "ship-claim", verificationStatus: "external_reference" });
     await trades.markDelivered(order.id, buyer);
     const opened = await trades.openDispute(order.id, buyer, { disputeTransactionDigest: "dispute-claim", disputedUnits: "30000", requestedBuyerUnits: "20000", claim: "Short delivery", evidenceStatement: "Buyer evidence", negotiationDeadline: "2026-09-03T00:00:00.000Z" });
@@ -371,15 +381,19 @@ describe("trade lifecycle API", () => {
     const refunded = await trades.settleByDeadline(unshipped.id, buyer, { kind: "refund_unshipped", transactionDigest: "refund-1", receiptObjectId: "0x9" });
     expect(refunded.status).toBe("settled");
     expect(refunded.settlement).toMatchObject({ buyerUnits: "5000", supplierUnits: "0", source: "refund_unshipped", receiptObjectId: "0x9", verifiedOnChain: false });
+    // Nothing further reached the supplier, so the reclaim adds no release record.
+    expect(refunded.releaseRecords?.filter((record) => record.stage === "delivery")).toEqual([]);
 
     const uninspected = await create("PO-UNINSPECTED");
     const later = control.ctx.now().getTime();
     await trades.recordFunding(uninspected.id, buyer, { packageId: "0x1", escrowObjectId: "0x3", transactionDigest: "fund-i", buyerAddress: "0xa", supplierAddress: "0xb", arbitratorAddress: "0xc", deliveryDeadlineMs: later + day, inspectionWindowMs: 7 * day });
-    await trades.markShipment(uninspected.id, supplier, { carrier: "GDEX", trackingNumber: "GD2", transactionDigest: "ship-i" });
+    await trades.markShipment(uninspected.id, supplier, { carrier: "GDEX", trackingNumber: "GD2", dispatchedAt: "2026-09-01T00:00:00.000Z", transactionDigest: "ship-i", evidenceSha256: "03".repeat(32) });
     await expect(trades.settleByDeadline(uninspected.id, buyer, { kind: "refund_unshipped", transactionDigest: "refund-2" })).rejects.toMatchObject({ code: "INVALID_STATE" });
     await expect(trades.settleByDeadline(uninspected.id, supplier, { kind: "claim_uninspected", transactionDigest: "claim-2" })).rejects.toMatchObject({ code: "DEADLINE_NOT_REACHED" });
     control.set(new Date(later + 9 * day).toISOString());
     const claimed = await trades.settleByDeadline(uninspected.id, supplier, { kind: "claim_uninspected", transactionDigest: "claim-2" });
     expect(claimed.settlement).toMatchObject({ buyerUnits: "0", supplierUnits: "5000", source: "claim_uninspected" });
+    // The supplier was actually paid the delivery balance, so the release trail must show it.
+    expect(claimed.releaseRecords?.at(-1)).toMatchObject({ stage: "delivery", amountUnits: "5000", cumulativeReleasedUnits: "5000", remainingUnits: "0", transactionDigest: "claim-2" });
   });
 });

@@ -69,7 +69,7 @@ function documentsOf(order: TradeOrder): OrderDocument[] {
   return (order.documents ?? []).map((document) => ({
     id: document.id, kind: document.kind as DocumentKind, name: document.name, size: document.sizeBytes, mimeType: document.mimeType, sha256: document.sha256,
     uploadedAt: document.uploadedAt, uploadedBy: document.uploadedRole === "buyer" ? "BUYER" as const : "SUPPLIER" as const,
-    extracted: document.extracted as ExtractedPurchaseOrder | undefined, transcript: document.transcript, storagePath: document.storagePath, remote: true,
+    extracted: document.extracted as ExtractedPurchaseOrder | undefined, transcript: document.transcript, storagePath: document.storagePath, anchor: document.anchor, remote: true,
   })).reverse();
 }
 
@@ -99,6 +99,11 @@ export function tradeOrderToView(order: TradeOrder, profile?: WorkspaceProfile):
     items, status, value: fromUnits(order.amountUnits, order.assetType),
     delivery: order.deliveryDate, deliveryLocation: order.deliveryLocation,
     settlementAsset: assetLabel(order.assetType), currency: assetSymbol(order.assetType),
+    releasePlan: order.releasePlan ? {
+      depositValue: fromUnits(order.releasePlan.depositUnits, order.assetType),
+      dispatchValue: fromUnits(order.releasePlan.dispatchUnits, order.assetType),
+      deliveryValue: fromUnits(order.releasePlan.deliveryUnits, order.assetType),
+    } : { depositValue: 0, dispatchValue: 0, deliveryValue: fromUnits(order.amountUnits, order.assetType) },
     version: order.version, inviteToken: undefined,
     source: "backend",
     documents: documentsOf(order),
@@ -137,6 +142,7 @@ export type CreateLiveOrderInput = {
   items: Array<{ id: string; description: string; quantity: number; unit: string; unitPrice: number }>;
   organizationId: string;
   supplierWalletAddress?: string;
+  releasePercentages: { deposit: number; dispatch: number };
 };
 
 export async function createLiveOrder(input: CreateLiveOrderInput): Promise<{ order: DemoOrder; inviteUrl: string; inviteDelivery: InvitationDelivery }> {
@@ -150,6 +156,12 @@ export async function createLiveOrder(input: CreateLiveOrderInput): Promise<{ or
       reference: input.reference.trim() || `PO-${Date.now().toString().slice(-8)}`,
       initiatorRole: input.initiatorRole, ...counterparty,
       arbitratorId: DEFAULT_ARBITRATOR_ID, arbitratorWalletAddress: DEFAULT_ARBITRATOR_ADDRESS, assetType: TESTNET_USDC_TYPE, amountUnits: toUnits(amount, TESTNET_USDC_TYPE),
+      releasePlan: (() => {
+        const totalUnits = BigInt(toUnits(amount, TESTNET_USDC_TYPE));
+        const depositUnits = totalUnits * BigInt(input.releasePercentages.deposit) / 100n;
+        const dispatchUnits = totalUnits * BigInt(input.releasePercentages.dispatch) / 100n;
+        return { depositUnits: depositUnits.toString(), dispatchUnits: dispatchUnits.toString(), deliveryUnits: (totalUnits - depositUnits - dispatchUnits).toString() };
+      })(),
       description: input.items.map((item) => item.description).join("; "),
       deliveryDate: input.deliveryDate, deliveryLocation: input.deliveryLocation,
       lineItems: input.items.map((item) => ({
@@ -230,8 +242,14 @@ export async function previewLiveInvite(token: string): Promise<DemoOrder> {
   return withProfile(apiRequest<TradeOrder>(`/v1/invites/${encodeURIComponent(token)}`));
 }
 
-export async function markLiveShipment(id: string, shipment?: { carrier: string; trackingNumber: string; dispatchedAt: string; expectedAt?: string; transactionDigest?: string }): Promise<DemoOrder> {
-  return withProfile(apiRequest<TradeOrder>(`/v1/orders/${encodeURIComponent(id)}/shipment`, { method: "POST", body: JSON.stringify(shipment ?? {}) }));
+export async function markLiveShipment(id: string, shipment: { carrier: string; trackingNumber: string; dispatchedAt: string; expectedAt?: string; transactionDigest: string; evidenceSha256: string }): Promise<DemoOrder> {
+  return withProfile(apiRequest<TradeOrder>(`/v1/orders/${encodeURIComponent(id)}/shipment`, { method: "POST", body: JSON.stringify(shipment) }));
+}
+
+export async function anchorLiveDocument(orderId: string, documentId: string, transactionDigest: string): Promise<DemoOrder> {
+  return withProfile(apiRequest<TradeOrder>(`/v1/orders/${encodeURIComponent(orderId)}/documents/${encodeURIComponent(documentId)}/anchor`, {
+    method: "PATCH", body: JSON.stringify({ transactionDigest }),
+  }));
 }
 
 export type DeadlineSettlementInput = { kind: "refund_unshipped" | "claim_uninspected"; transactionDigest: string; receiptObjectId?: string };
@@ -276,7 +294,7 @@ export async function recordDemoFunding(order: DemoOrder): Promise<DemoOrder> {
   return withProfile(apiRequest<TradeOrder>(`/v1/orders/${encodeURIComponent(order.id)}/funding`, {
     method: "POST",
     body: JSON.stringify({
-      packageId: process.env.NEXT_PUBLIC_PAYPROOF_PACKAGE_ID?.trim() || "0x132dda3d655724c5a667a4454baef3db3f6529ecf42ddb65132e1d9d14fd6f30",
+      packageId: process.env.NEXT_PUBLIC_PAYPROOF_PACKAGE_ID?.trim() || "0x09016642916e5558256e4d5dbc2745c4eb4585c0f163a7f96d99438c77960501",
       escrowObjectId: placeholderId("0x"), transactionDigest: `demo-${Date.now()}`,
       buyerAddress: session?.suiAddress || placeholderId("0x"), supplierAddress: raw.supplierWalletAddress || placeholderId("0x"),
       arbitratorAddress: raw.arbitratorWalletAddress || DEFAULT_ARBITRATOR_ADDRESS,

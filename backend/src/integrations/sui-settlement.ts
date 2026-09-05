@@ -35,6 +35,7 @@ export interface SuiSettlementVerifier {
 
 export interface GrpcSuiSettlementVerifierOptions {
   packageId: string;
+  legacyPackageIds?: string[];
   network?: string;
   baseUrl?: string;
   client?: SuiSettlementReader;
@@ -175,11 +176,11 @@ function deletedObject(tx: any, id: string): boolean {
 export class GrpcSuiSettlementVerifier implements SuiSettlementVerifier {
   private readonly client: SuiSettlementReader;
   private readonly packageId: string;
-  private readonly packageIdForTypes: string;
+  private readonly allowedPackages: Set<string>;
 
   constructor(options: GrpcSuiSettlementVerifierOptions) {
     this.packageId = objectId(options.packageId, "packageId");
-    this.packageIdForTypes = this.packageId;
+    this.allowedPackages = new Set([this.packageId, ...(options.legacyPackageIds ?? []).map((value) => objectId(value, "legacyPackageId"))]);
     this.client = options.client ?? new SuiGrpcClient({
       network: options.network ?? "testnet",
       baseUrl: options.baseUrl ?? "https://fullnode.testnet.sui.io:443",
@@ -230,7 +231,7 @@ export class GrpcSuiSettlementVerifier implements SuiSettlementVerifier {
     const settlementDigest = digest(proof.transactionDigest, "transactionDigest");
     const fundingDigest = digest(binding.fundingTransactionDigest, "fundingTransactionDigest");
     const disputeDigest = digest(binding.disputeTransactionDigest, "disputeTransactionDigest");
-    if (packageId !== this.packageId || bindingPackageId !== this.packageId) {
+    if (packageId !== bindingPackageId || !this.allowedPackages.has(packageId)) {
       fail("SUI_VERIFICATION_FAILED", "The proof references a package outside the configured escrow deployment");
     }
     if (escrowObjectId !== bindingEscrowObjectId) {
@@ -247,13 +248,13 @@ export class GrpcSuiSettlementVerifier implements SuiSettlementVerifier {
       fail("SUI_VERIFICATION_FAILED", "The bound Sui parties must be distinct");
     }
     const assetType = moveType(dispute.assetType, "assetType");
-    const escrowCreatedType = `${this.packageIdForTypes}::escrow::EscrowCreated<${assetType}>`;
-    const disputeOpenedType = `${this.packageIdForTypes}::escrow::DisputeOpened<${assetType}>`;
-    const settlementExecutedType = `${this.packageIdForTypes}::escrow::SettlementExecuted<${assetType}>`;
-    const receiptType = `${this.packageIdForTypes}::escrow::SettlementReceipt<${assetType}>`;
+    const escrowCreatedType = `${packageId}::escrow::EscrowCreated<${assetType}>`;
+    const disputeOpenedType = `${packageId}::escrow::DisputeOpened<${assetType}>`;
+    const settlementExecutedType = `${packageId}::escrow::SettlementExecuted<${assetType}>`;
+    const receiptType = `${packageId}::escrow::SettlementReceipt<${assetType}>`;
 
     const fundingTx = await this.readTransaction(fundingDigest);
-    const fundingEvent = findEvent(fundingTx, escrowCreatedType, "EscrowCreated", this.packageId);
+    const fundingEvent = findEvent(fundingTx, escrowCreatedType, "EscrowCreated", packageId);
     const fundingData = eventData(fundingEvent, "EscrowCreated");
     if (
       !sameObjectId(fundingData.escrow_id, escrowObjectId) ||
@@ -263,13 +264,13 @@ export class GrpcSuiSettlementVerifier implements SuiSettlementVerifier {
       !sameAddress(fundingEvent.sender, buyerAddress) ||
       fundingData.order_reference !== dispute.tradeTerms.orderReference ||
       units(fundingData.amount, "EscrowCreated.amount") !== units(dispute.totalEscrowUnits, "totalEscrowUnits") ||
-      !createdObjectHasType(fundingTx, escrowObjectId, `${this.packageIdForTypes}::escrow::Escrow<${assetType}>`)
+      !createdObjectHasType(fundingTx, escrowObjectId, `${packageId}::escrow::Escrow<${assetType}>`)
     ) {
       fail("SUI_VERIFICATION_FAILED", "The funding transaction does not match the dispute escrow binding");
     }
 
     const disputeTx = await this.readTransaction(disputeDigest);
-    const disputeEvent = findEvent(disputeTx, disputeOpenedType, "DisputeOpened", this.packageId);
+    const disputeEvent = findEvent(disputeTx, disputeOpenedType, "DisputeOpened", packageId);
     const disputeData = eventData(disputeEvent, "DisputeOpened");
     if (
       !sameObjectId(disputeData.escrow_id, escrowObjectId) ||
@@ -281,7 +282,7 @@ export class GrpcSuiSettlementVerifier implements SuiSettlementVerifier {
     }
 
     const settlementTx = await this.readTransaction(settlementDigest);
-    const settlementEvent = findEvent(settlementTx, settlementExecutedType, "SettlementExecuted", this.packageId);
+    const settlementEvent = findEvent(settlementTx, settlementExecutedType, "SettlementExecuted", packageId);
     const settlementData = eventData(settlementEvent, "SettlementExecuted");
     const buyerRefund = units(settlementData.buyer_refund, "SettlementExecuted.buyer_refund");
     const supplierRelease = units(settlementData.supplier_release, "SettlementExecuted.supplier_release");
@@ -332,7 +333,7 @@ export class GrpcSuiSettlementVerifier implements SuiSettlementVerifier {
 
     return {
       transactionDigest: settlementDigest,
-      packageId: this.packageId,
+      packageId,
       escrowObjectId,
       receiptObjectId,
       checkpoint: settlementTx.checkpoint ?? undefined,

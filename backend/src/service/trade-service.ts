@@ -17,6 +17,7 @@ import type {
   TradeOrderStatus,
   TradeOrderWithInvite,
   TradeLineItem,
+  TradeReleasePlan,
 } from "../domain/trade-types.js";
 import type { TradeStore } from "../store/trade-store.js";
 import { MemoryDocumentStore, type DocumentStore } from "../store/document-store.js";
@@ -25,7 +26,7 @@ import type { OrganizationService } from "./organization-service.js";
 import { DisabledInvitationEmailSender, type InvitationEmailSender } from "../integrations/invitation-email.js";
 
 /** Version of the platform terms a party accepts when confirming an order. */
-export const TERMS_VERSION = "1.0";
+export const TERMS_VERSION = "1.1";
 
 export interface CreateTradeOrderInput {
   reference: string;
@@ -45,6 +46,7 @@ export interface CreateTradeOrderInput {
   deliveryDate: string;
   deliveryLocation: string;
   lineItems: TradeLineItem[];
+  releasePlan?: TradeReleasePlan;
   buyerOrganizationId?: string;
 }
 
@@ -96,6 +98,7 @@ function canonicalOrderHash(input: CreateTradeOrderInput, initiatorId: string): 
     supplierName: input.supplierName?.trim() ?? "", supplierWalletAddress: input.supplierWalletAddress, arbitratorWalletAddress: input.arbitratorWalletAddress, arbitratorId: input.arbitratorId,
     assetType: input.assetType, amountUnits: input.amountUnits, description: input.description.trim(),
     deliveryDate: input.deliveryDate, deliveryLocation: input.deliveryLocation.trim(), lineItems: input.lineItems,
+    releasePlan: releasePlan(input),
   }));
 }
 
@@ -130,6 +133,18 @@ function ensureAmount(value: string): string {
     throw new DomainError("INVALID_ORDER_AMOUNT", "Order amount must be a positive integer in asset base units", 400);
   }
   return value;
+}
+
+function releasePlan(input: CreateTradeOrderInput): TradeReleasePlan {
+  const total = BigInt(ensureAmount(input.amountUnits));
+  const plan = input.releasePlan ?? { depositUnits: "0", dispatchUnits: "0", deliveryUnits: total.toString() };
+  for (const value of [plan.depositUnits, plan.dispatchUnits, plan.deliveryUnits]) {
+    if (!/^\d+$/.test(value)) throw new DomainError("INVALID_RELEASE_PLAN", "Release amounts must be non-negative integers in asset base units", 400);
+  }
+  if (BigInt(plan.depositUnits) + BigInt(plan.dispatchUnits) + BigInt(plan.deliveryUnits) !== total) {
+    throw new DomainError("INVALID_RELEASE_PLAN", "Deposit, dispatch, and delivery releases must equal the order amount", 400);
+  }
+  return structuredClone(plan);
 }
 
 function sameAddress(left: string | undefined, right: string | undefined): boolean {
@@ -203,6 +218,33 @@ export class TradeService {
     return { document, bytes: file.bytes, mimeType: file.mimeType || document.mimeType };
   }
 
+  /** Bind an already-stored document to a verified Sui transaction. This lets irreversible
+   * release flows persist evidence before asking the supplier to sign. */
+  async anchorDocument(orderId: string, actor: Actor, documentId: string, transactionDigest: string): Promise<TradeOrder> {
+    const order = await this.getOrder(orderId, actor);
+    const document = order.documents?.find((candidate) => candidate.id === documentId);
+    if (!document) throw new DomainError("NOT_FOUND", "Document not found", 404);
+    if (!order.funding) throw new DomainError("FUNDING_REQUIRED", "Evidence can only be anchored to a funded order", 409);
+    const digest = transactionDigest.trim();
+    if (!digest) throw new DomainError("INVALID_DOCUMENT", "An anchor transaction digest is required", 400);
+    let verificationStatus: "verified_on_chain" | "external_reference" = "external_reference";
+    if (this.fundingVerifier?.verifyEvidenceAnchor) {
+      await this.fundingVerifier.verifyEvidenceAnchor(order, digest, document.sha256);
+      verificationStatus = "verified_on_chain";
+    }
+    const now = this.ctx.now().toISOString();
+    const updated: TradeOrder = {
+      ...order,
+      documents: order.documents!.map((candidate) => candidate.id === documentId
+        ? { ...candidate, anchor: { transactionDigest: digest, verificationStatus } }
+        : candidate),
+      updatedAt: now,
+      version: order.version + 1,
+    };
+    await this.store.saveOrder(updated, order.version);
+    return updated;
+  }
+
   private async hasCapability(actor: Actor, capability: "buy" | "supply", organizationId: string): Promise<boolean> {
     if (!this.organizations) return false;
     try { await this.organizations.requireCapability(actor, capability, organizationId); return true; } catch { return false; }
@@ -221,7 +263,7 @@ export class TradeService {
       arbitratorId: input.arbitratorId, assetType: input.assetType.trim(), amountUnits: ensureAmount(input.amountUnits),
       orderHash: canonicalOrderHash(input, actor.id), description: input.description.trim(),
       deliveryDate: input.deliveryDate.trim(), deliveryLocation: input.deliveryLocation.trim(),
-      lineItems: structuredClone(input.lineItems), version: 0, createdAt: now, updatedAt: now,
+      lineItems: structuredClone(input.lineItems), releasePlan: releasePlan(input), version: 0, createdAt: now, updatedAt: now,
     };
     let order: TradeOrder;
     if (initiatorRole === "supplier") {
@@ -458,32 +500,41 @@ export class TradeService {
     const updated: TradeOrder = {
       ...order, status: "funded", updatedAt: now, version: order.version + 1,
       funding: { ...input, ...deadlines, verificationStatus, fundedAt: now },
+      releaseRecords: BigInt(order.releasePlan?.depositUnits ?? "0") > 0n ? [{
+        stage: "deposit", amountUnits: order.releasePlan!.depositUnits,
+        cumulativeReleasedUnits: order.releasePlan!.depositUnits,
+        remainingUnits: (BigInt(order.amountUnits) - BigInt(order.releasePlan!.depositUnits)).toString(),
+        transactionDigest: input.transactionDigest, verificationStatus, releasedAt: now,
+      }] : [],
     };
     await this.store.saveOrder(updated, order.version);
     return updated;
   }
 
-  async markShipment(orderId: string, actor: Actor, input?: ShipmentInput): Promise<TradeOrder> {
+  async markShipment(orderId: string, actor: Actor, input: ShipmentInput): Promise<TradeOrder> {
     const order = await this.getOrder(orderId, actor);
     await this.requireSupplierAuthority(order, actor, "Only an authorized supplier can mark shipment");
     if (order.status !== "funded") throw new DomainError("INVALID_STATE", "The order must be funded before shipment");
     const now = this.ctx.now().toISOString();
-    const transactionDigest = input?.transactionDigest?.trim();
-    let proof: { transactionDigest?: string; verificationStatus?: "verified_on_chain" | "external_reference" } = {};
-    if (transactionDigest) {
-      if (!order.funding) throw new DomainError("FUNDING_REQUIRED", "Shipment can only be signed against a funded escrow", 409);
-      let verificationStatus: "verified_on_chain" | "external_reference" = "external_reference";
-      if (this.fundingVerifier?.verifyShipment) {
-        await this.fundingVerifier.verifyShipment(order, transactionDigest);
-        verificationStatus = "verified_on_chain";
-      }
-      proof = { transactionDigest, verificationStatus };
+    if (!order.funding) throw new DomainError("FUNDING_REQUIRED", "Shipment can only be signed against a funded escrow", 409);
+    const transactionDigest = input.transactionDigest.trim();
+    let verificationStatus: "verified_on_chain" | "external_reference" = "external_reference";
+    if (this.fundingVerifier?.verifyShipment) {
+      await this.fundingVerifier.verifyShipment(order, transactionDigest, input.evidenceSha256);
+      verificationStatus = "verified_on_chain";
     }
-    const details = input && (input.carrier || input.trackingNumber)
-      ? { carrier: input.carrier?.trim() || "Not stated", trackingNumber: input.trackingNumber?.trim() || "", dispatchedAt: input.dispatchedAt?.trim() || now, expectedAt: input.expectedAt?.trim() || undefined, recordedBy: actor.id }
-      : order.shipment ?? (transactionDigest ? { carrier: "Not stated", trackingNumber: "", dispatchedAt: now, recordedBy: actor.id } : undefined);
-    const shipment = details ? { ...details, ...proof } : undefined;
-    const next: TradeOrder = { ...order, status: "in_transit", shipment, updatedAt: now, version: order.version + 1 };
+    const dispatchUnits = order.releasePlan?.dispatchUnits ?? "0";
+    const depositUnits = order.releasePlan?.depositUnits ?? "0";
+    const deliveryUnits = order.releasePlan?.deliveryUnits ?? order.amountUnits;
+    const shipment = {
+      carrier: input.carrier.trim(), trackingNumber: input.trackingNumber.trim(), dispatchedAt: input.dispatchedAt.trim(),
+      expectedAt: input.expectedAt?.trim() || undefined, recordedBy: actor.id, transactionDigest, verificationStatus,
+    };
+    const releaseRecords = [...(order.releaseRecords ?? [])];
+    releaseRecords.push({ stage: "dispatch", amountUnits: dispatchUnits,
+      cumulativeReleasedUnits: (BigInt(depositUnits) + BigInt(dispatchUnits)).toString(), remainingUnits: deliveryUnits,
+      transactionDigest, verificationStatus, releasedAt: now, evidenceSha256: input.evidenceSha256 });
+    const next: TradeOrder = { ...order, status: "in_transit", shipment, releaseRecords, updatedAt: now, version: order.version + 1 };
     await this.store.saveOrder(next, order.version);
     return next;
   }
@@ -532,13 +583,22 @@ export class TradeService {
       verificationStatus = "verified_on_chain";
     }
     const now = this.ctx.now().toISOString();
+    const depositUnits = BigInt(order.releasePlan?.depositUnits ?? "0");
+    const deliveryUnits = BigInt(order.releasePlan?.deliveryUnits ?? order.amountUnits);
+    const remainingUnits = refund ? BigInt(order.amountUnits) - depositUnits : deliveryUnits;
     const updated: TradeOrder = {
       ...order, status: "settled", updatedAt: now, version: order.version + 1,
       settlement: {
-        buyerUnits: refund ? order.amountUnits : "0", supplierUnits: refund ? "0" : order.amountUnits,
+        buyerUnits: refund ? remainingUnits.toString() : "0", supplierUnits: refund ? depositUnits.toString() : order.amountUnits,
         transactionDigest: input.transactionDigest.trim(), receiptObjectId: input.receiptObjectId?.trim(),
         verifiedOnChain: verificationStatus === "verified_on_chain", source: input.kind,
       },
+      // A reclaim returns the balance to the buyer, so only the claim path releases a further
+      // tranche to the supplier. Recording it keeps the release trail complete either way.
+      releaseRecords: refund ? order.releaseRecords ?? [] : [...(order.releaseRecords ?? []), {
+        stage: "delivery", amountUnits: deliveryUnits.toString(), cumulativeReleasedUnits: order.amountUnits,
+        remainingUnits: "0", transactionDigest: input.transactionDigest.trim(), verificationStatus, releasedAt: now,
+      }],
     };
     await this.store.saveOrder(updated, order.version);
     return updated;
@@ -548,7 +608,8 @@ export class TradeService {
     const order = await this.getOrder(orderId, actor);
     await this.requireBuyerAuthority(order, actor, "Only an authorized buyer can open a dispute");
     if (!order.supplierId || !order.buyerId || !order.funding) throw new DomainError("FUNDING_REQUIRED", "A funded order with a supplier is required before opening a dispute", 409);
-    if (!["funded", "in_transit", "delivered"].includes(order.status)) throw new DomainError("INVALID_STATE", "This order cannot be disputed at its current stage");
+    const allowedStates = order.releasePlan ? ["delivered"] : ["funded", "in_transit", "delivered"];
+    if (!allowedStates.includes(order.status)) throw new DomainError("INVALID_STATE", "This order cannot be disputed at its current stage");
     // The claim transaction pays the undisputed value to the supplier itself, so the release is
     // recorded here rather than as a separate supplier step.
     let releaseStatus: "verified_on_chain" | "external_reference" = "external_reference";
@@ -558,7 +619,7 @@ export class TradeService {
     }
     const dispute = await this.disputes.open({
       orderId: order.id, buyerId: order.buyerId, supplierId: order.supplierId, arbitratorId: order.arbitratorId,
-      assetType: order.assetType, totalEscrowUnits: order.amountUnits, disputedUnits: input.disputedUnits,
+      assetType: order.assetType, totalEscrowUnits: order.releasePlan?.deliveryUnits ?? order.amountUnits, disputedUnits: input.disputedUnits,
       requestedBuyerUnits: input.requestedBuyerUnits, claim: input.claim, evidenceStatement: input.evidenceStatement,
       evidenceFiles: input.evidenceFiles, negotiationDeadline: input.negotiationDeadline, maxHumanRounds: input.maxHumanRounds,
       tradeTerms: {
@@ -620,6 +681,11 @@ export class TradeService {
         buyerUnits: "0", supplierUnits: order.amountUnits, transactionDigest: input.transactionDigest.trim(),
         receiptObjectId: input.receiptObjectId?.trim(), verifiedOnChain: verificationStatus === "verified_on_chain", source: "full_acceptance",
       },
+      releaseRecords: [...(order.releaseRecords ?? []), {
+        stage: "delivery", amountUnits: order.releasePlan?.deliveryUnits ?? order.amountUnits,
+        cumulativeReleasedUnits: order.amountUnits, remainingUnits: "0", transactionDigest: input.transactionDigest.trim(),
+        verificationStatus, releasedAt: now,
+      }],
     };
     await this.store.saveOrder(updated, order.version);
     return updated;
@@ -635,7 +701,20 @@ export class TradeService {
       : dispute.status === "settlement_pending" ? "settlement_pending"
       : "settled";
     const next: TradeOrder = { ...order, status, updatedAt: this.ctx.now().toISOString(), version: order.version + 1 };
-    if (dispute.settlement) next.settlement = { buyerUnits: dispute.settlement.buyerUnits, supplierUnits: dispute.settlement.supplierUnits, verifiedOnChain: dispute.settlement.executionStatus === "verified_on_chain", transactionDigest: dispute.settlement.execution?.transactionDigest, receiptObjectId: dispute.settlement.execution?.receiptObjectId, source: "dispute" };
+    if (dispute.settlement) {
+      next.settlement = { buyerUnits: dispute.settlement.buyerUnits,
+        supplierUnits: (BigInt(order.amountUnits) - BigInt(dispute.settlement.buyerUnits)).toString(),
+        verifiedOnChain: dispute.settlement.executionStatus === "verified_on_chain", transactionDigest: dispute.settlement.execution?.transactionDigest,
+        receiptObjectId: dispute.settlement.execution?.receiptObjectId, source: "dispute" };
+      if (dispute.settlement.executionStatus === "verified_on_chain" && dispute.settlement.execution?.transactionDigest
+        && !(next.releaseRecords ?? []).some((record) => record.stage === "delivery")) {
+        const early = BigInt(order.amountUnits) - BigInt(order.releasePlan?.deliveryUnits ?? order.amountUnits);
+        const supplierFinal = BigInt(order.releasePlan?.deliveryUnits ?? order.amountUnits) - BigInt(dispute.settlement.buyerUnits);
+        next.releaseRecords = [...(next.releaseRecords ?? []), { stage: "delivery", amountUnits: supplierFinal.toString(),
+          cumulativeReleasedUnits: (early + supplierFinal).toString(), remainingUnits: "0", transactionDigest: dispute.settlement.execution.transactionDigest,
+          verificationStatus: "verified_on_chain", releasedAt: this.ctx.now().toISOString() }];
+      }
+    }
     await this.store.saveOrder(next, order.version);
     return next;
   }

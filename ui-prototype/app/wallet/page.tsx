@@ -9,16 +9,61 @@ import { Input } from "@/components/ui/input";
 import { AppShell, HelpHint, Notice, PageTitle } from "@/app/components/app-shell";
 import { type DemoOrder, formatOrderMoney as money } from "@/lib/demo-orders";
 import { type PaymentRequest, parsePaymentRequest, useEscrowActions } from "@/lib/escrow-actions";
+import { type ReleaseStageKey, releasedStages } from "@/app/components/release-plan";
 import { explorerTransactionUrl, suiDAppKit, TESTNET_USDC_TYPE } from "@/lib/sui-dapp-kit";
 import { useWorkspace } from "@/lib/use-workspace";
 import { AnimatedAmount, LiftCard } from "@/app/components/motion";
 
-type Movement = { id: string; type: "in" | "out"; title: string; detail: string; amount: number; currency?: string; at: string; state: "pending" | "complete"; transactionDigest?: string };
+/** "in" and "out" change the wallet balance. "escrow" moves money the contract holds, so it
+ *  is shown without a sign: the buyer already paid it in when the order was funded. */
+type Movement = { id: string; type: "in" | "out" | "escrow"; title: string; detail: string; amount: number; currency?: string; at: string; state: "pending" | "complete"; transactionDigest?: string; stage?: ReleaseStageKey | "escrow"; orderId?: string };
 type Method = "card" | "bank";
 type Balances = { usdc: number };
 
 function sumOrders(orders: DemoOrder[], pick: (order: DemoOrder) => number = (order) => order.value): string {
   return `${money(orders.reduce((total, order) => total + pick(order), 0))} USDC`;
+}
+
+/** Escrow movements are derived from the orders themselves rather than stored, so the trail is
+ *  complete for every path the contract can take, including deadline settlements. */
+function escrowMovements(orders: DemoOrder[]): Movement[] {
+  const out: Movement[] = [];
+  for (const order of orders) {
+    const supplying = order.role === "SUPPLIER";
+    const released = releasedStages(order.status);
+    if (!released) continue;
+    const plan = order.releasePlan ?? { depositValue: 0, dispatchValue: 0, deliveryValue: order.value };
+    const settledAt = order.raw?.updatedAt ?? order.events.at(-1)?.at ?? order.funding?.fundedAt ?? "";
+    const base = { detail: `${order.reference} with ${order.counterparty}`, currency: order.currency, state: "complete" as const, orderId: order.id };
+    const toSupplier = supplying ? "in" as const : "escrow" as const;
+    const suffix = supplying ? "" : " to supplier";
+
+    if (!supplying) {
+      out.push({ ...base, id: `${order.id}-escrow`, type: "out", title: "Escrow funded", amount: order.value,
+        at: order.funding?.fundedAt ?? settledAt, transactionDigest: order.funding?.transactionDigest, stage: "escrow" });
+    }
+    if (plan.depositValue > 0) {
+      out.push({ ...base, id: `${order.id}-deposit`, type: toSupplier, title: `Order deposit released${suffix}`, amount: plan.depositValue,
+        at: order.funding?.fundedAt ?? settledAt, transactionDigest: order.funding?.transactionDigest, stage: "deposit" });
+    }
+    if (released.dispatch && plan.dispatchValue > 0) {
+      out.push({ ...base, id: `${order.id}-dispatch`, type: toSupplier, title: `Dispatch payment released${suffix}`, amount: plan.dispatchValue,
+        at: order.shipment?.dispatchedAt ?? settledAt, transactionDigest: order.shipment?.transactionDigest, stage: "dispatch" });
+    }
+    if (!order.settlement) continue;
+    // Settlement figures are cumulative, so subtract whatever the earlier tranches already paid.
+    const early = plan.depositValue + (released.dispatch ? plan.dispatchValue : 0);
+    const finalToSupplier = Math.max(0, order.settlement.supplierValue - early);
+    if (finalToSupplier > 0) {
+      out.push({ ...base, id: `${order.id}-delivery`, type: toSupplier, title: `Delivery balance released${suffix}`, amount: finalToSupplier,
+        at: settledAt, transactionDigest: order.settlement.transactionDigest, stage: "delivery" });
+    }
+    if (!supplying && order.settlement.buyerValue > 0) {
+      out.push({ ...base, id: `${order.id}-refund`, type: "in", title: "Escrow returned to you", amount: order.settlement.buyerValue,
+        at: settledAt, transactionDigest: order.settlement.transactionDigest, stage: "delivery" });
+    }
+  }
+  return out;
 }
 
 const MOVEMENTS_KEY = "payproof_wallet_movements";
@@ -78,6 +123,9 @@ export default function WalletPage() {
     };
   }, [ledgerOrders, movements]);
 
+  const activity = useMemo(() => [...escrowMovements(ledgerOrders), ...movements]
+    .sort((a, b) => (b.at ?? "").localeCompare(a.at ?? "")), [ledgerOrders, movements]);
+
   const record = (movement: Movement) => {
     const next = [movement, ...movements];
     setMovements(next);
@@ -127,16 +175,23 @@ export default function WalletPage() {
 
       <section className="panel" aria-labelledby="activity-title">
         <div className="panel-head"><h2 id="activity-title">Activity</h2></div>
-        {movements.length === 0 ? (
-          <p className="panel-empty">No wallet movements yet. Top-ups, withdrawals and released settlements will appear here.</p>
+        {activity.length === 0 ? (
+          <p className="panel-empty">No wallet movements yet. Top-ups, withdrawals and each escrow release will appear here.</p>
         ) : (
           <ul className="movement-list">
-            {movements.map((item) => (
+            {activity.map((item) => (
               <li key={item.id}>
-                <span className={`movement-icon movement-${item.type}`}>{item.type === "in" ? <ArrowDownLeft size={15} aria-hidden="true" /> : <ArrowUpRight size={15} aria-hidden="true" />}</span>
-                <div><strong>{item.title}</strong><small>{item.detail}. {new Date(item.at).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}{item.transactionDigest && <> <a className="link" href={explorerTransactionUrl(item.transactionDigest)} target="_blank" rel="noreferrer">Receipt on Suiscan<ExternalLink size={11} aria-hidden="true" /></a></>}</small></div>
-                <span className={`pill ${item.state === "pending" ? "pill-attention" : "pill-success"}`}>{item.state === "pending" ? "Pending" : "Complete"}</span>
-                <strong className={`num ${item.type === "in" ? "amount-in" : ""}`}>{item.type === "in" ? "+" : "-"}{money(item.amount)} USDC</strong>
+                <span className={`movement-icon movement-${item.type}${item.stage ? ` movement-stage movement-stage-${item.stage}` : ""}`}>
+                  {item.stage === "escrow" ? <LockKeyhole size={15} aria-hidden="true" />
+                    : item.type === "escrow" ? <ArrowRight size={15} aria-hidden="true" />
+                    : item.type === "out" ? <ArrowUpRight size={15} aria-hidden="true" /> : <ArrowDownLeft size={15} aria-hidden="true" />}
+                </span>
+                <div>
+                  <strong>{item.title}</strong>
+                  <small>{item.orderId ? <a className="link" href={`/orders/${encodeURIComponent(item.orderId)}`}>{item.detail}</a> : item.detail}. {new Date(item.at).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}{item.transactionDigest && <> <a className="link" href={explorerTransactionUrl(item.transactionDigest)} target="_blank" rel="noreferrer">Receipt on Suiscan<ExternalLink size={11} aria-hidden="true" /></a></>}</small>
+                </div>
+                <span className={`pill ${item.state === "pending" ? "pill-attention" : item.type === "escrow" ? "pill-neutral" : "pill-success"}`}>{item.state === "pending" ? "Pending" : item.type === "escrow" ? "From escrow" : "Complete"}</span>
+                <strong className={`num ${item.type === "in" ? "amount-in" : item.type === "escrow" ? "amount-escrow" : ""}`}>{item.type === "in" ? "+" : item.type === "out" ? "-" : ""}{money(item.amount)} {item.currency ?? "USDC"}</strong>
               </li>
             ))}
           </ul>
