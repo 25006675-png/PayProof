@@ -502,8 +502,6 @@ export class TradeService {
       funding: { ...input, ...deadlines, verificationStatus, fundedAt: now },
       releaseRecords: BigInt(order.releasePlan?.depositUnits ?? "0") > 0n ? [{
         stage: "deposit", amountUnits: order.releasePlan!.depositUnits,
-        cumulativeReleasedUnits: order.releasePlan!.depositUnits,
-        remainingUnits: (BigInt(order.amountUnits) - BigInt(order.releasePlan!.depositUnits)).toString(),
         transactionDigest: input.transactionDigest, verificationStatus, releasedAt: now,
       }] : [],
     };
@@ -524,15 +522,12 @@ export class TradeService {
       verificationStatus = "verified_on_chain";
     }
     const dispatchUnits = order.releasePlan?.dispatchUnits ?? "0";
-    const depositUnits = order.releasePlan?.depositUnits ?? "0";
-    const deliveryUnits = order.releasePlan?.deliveryUnits ?? order.amountUnits;
     const shipment = {
       carrier: input.carrier.trim(), trackingNumber: input.trackingNumber.trim(), dispatchedAt: input.dispatchedAt.trim(),
       expectedAt: input.expectedAt?.trim() || undefined, recordedBy: actor.id, transactionDigest, verificationStatus,
     };
     const releaseRecords = [...(order.releaseRecords ?? [])];
     releaseRecords.push({ stage: "dispatch", amountUnits: dispatchUnits,
-      cumulativeReleasedUnits: (BigInt(depositUnits) + BigInt(dispatchUnits)).toString(), remainingUnits: deliveryUnits,
       transactionDigest, verificationStatus, releasedAt: now, evidenceSha256: input.evidenceSha256 });
     const next: TradeOrder = { ...order, status: "in_transit", shipment, releaseRecords, updatedAt: now, version: order.version + 1 };
     await this.store.saveOrder(next, order.version);
@@ -596,8 +591,8 @@ export class TradeService {
       // A reclaim returns the balance to the buyer, so only the claim path releases a further
       // tranche to the supplier. Recording it keeps the release trail complete either way.
       releaseRecords: refund ? order.releaseRecords ?? [] : [...(order.releaseRecords ?? []), {
-        stage: "delivery", amountUnits: deliveryUnits.toString(), cumulativeReleasedUnits: order.amountUnits,
-        remainingUnits: "0", transactionDigest: input.transactionDigest.trim(), verificationStatus, releasedAt: now,
+        stage: "delivery", amountUnits: deliveryUnits.toString(),
+        transactionDigest: input.transactionDigest.trim(), verificationStatus, releasedAt: now,
       }],
     };
     await this.store.saveOrder(updated, order.version);
@@ -636,10 +631,17 @@ export class TradeService {
       },
     }, actor);
     const now = this.ctx.now().toISOString();
+    // open_dispute pays the supplier everything it is not being asked to give back, in the same
+    // transaction. Only the disputed amount stays in escrow for the settlement to split.
+    const undisputedUnits = BigInt(order.releasePlan?.deliveryUnits ?? order.amountUnits) - BigInt(input.disputedUnits);
     const updated: TradeOrder = {
       ...order, disputeId: dispute.id, status: "dispute_open", updatedAt: now, version: order.version + 1,
       inspection: input.inspection ? { lines: structuredClone(input.inspection.lines), note: input.inspection.note?.trim(), recordedBy: actor.id, recordedAt: now } : order.inspection,
       undisputedRelease: { transactionDigest: input.disputeTransactionDigest, verificationStatus: releaseStatus, releasedAt: now },
+      releaseRecords: undisputedUnits > 0n ? [...(order.releaseRecords ?? []), {
+        stage: "undisputed", amountUnits: undisputedUnits.toString(),
+        transactionDigest: input.disputeTransactionDigest, verificationStatus: releaseStatus, releasedAt: now,
+      }] : order.releaseRecords,
     };
     await this.store.saveOrder(updated, order.version);
     return { order: updated, dispute };
@@ -683,8 +685,7 @@ export class TradeService {
       },
       releaseRecords: [...(order.releaseRecords ?? []), {
         stage: "delivery", amountUnits: order.releasePlan?.deliveryUnits ?? order.amountUnits,
-        cumulativeReleasedUnits: order.amountUnits, remainingUnits: "0", transactionDigest: input.transactionDigest.trim(),
-        verificationStatus, releasedAt: now,
+        transactionDigest: input.transactionDigest.trim(), verificationStatus, releasedAt: now,
       }],
     };
     await this.store.saveOrder(updated, order.version);
@@ -706,13 +707,16 @@ export class TradeService {
         supplierUnits: (BigInt(order.amountUnits) - BigInt(dispute.settlement.buyerUnits)).toString(),
         verifiedOnChain: dispute.settlement.executionStatus === "verified_on_chain", transactionDigest: dispute.settlement.execution?.transactionDigest,
         receiptObjectId: dispute.settlement.execution?.receiptObjectId, source: "dispute" };
+      // The undisputed value was already released when the claim opened, so the settlement only
+      // pays the supplier its share of the amount that stayed in escrow.
       if (dispute.settlement.executionStatus === "verified_on_chain" && dispute.settlement.execution?.transactionDigest
         && !(next.releaseRecords ?? []).some((record) => record.stage === "delivery")) {
-        const early = BigInt(order.amountUnits) - BigInt(order.releasePlan?.deliveryUnits ?? order.amountUnits);
-        const supplierFinal = BigInt(order.releasePlan?.deliveryUnits ?? order.amountUnits) - BigInt(dispute.settlement.buyerUnits);
-        next.releaseRecords = [...(next.releaseRecords ?? []), { stage: "delivery", amountUnits: supplierFinal.toString(),
-          cumulativeReleasedUnits: (early + supplierFinal).toString(), remainingUnits: "0", transactionDigest: dispute.settlement.execution.transactionDigest,
-          verificationStatus: "verified_on_chain", releasedAt: this.ctx.now().toISOString() }];
+        const supplierShare = BigInt(dispute.disputedUnits) - BigInt(dispute.settlement.buyerUnits);
+        if (supplierShare > 0n) {
+          next.releaseRecords = [...(next.releaseRecords ?? []), { stage: "delivery", amountUnits: supplierShare.toString(),
+            transactionDigest: dispute.settlement.execution.transactionDigest,
+            verificationStatus: "verified_on_chain", releasedAt: this.ctx.now().toISOString() }];
+        }
       }
     }
     await this.store.saveOrder(next, order.version);

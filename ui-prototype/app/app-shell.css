@@ -311,10 +311,15 @@
 .release-zone-body{display:none;gap:1px;min-width:0;padding-bottom:7px;border-bottom:1px solid var(--rule-strong)}
 @container (min-width:132px){.release-zone-body{display:grid}}
 .release-zone+.release-zone .release-zone-body{border-left:1px solid var(--rule-strong);padding-left:10px}
+.release-summary{display:flex;justify-content:space-between;align-items:end;gap:16px;padding-bottom:7px;border-bottom:1px solid var(--rule-strong)}
+/* Containment stops a zone sizing to its own text, which collapses it to nothing in a flex row. */
+.release-summary .release-zone{container-type:normal;min-width:0}
+.release-summary .release-zone .release-zone-body{display:grid;border:0;padding:0}
+.release-summary .release-zone+.release-zone .release-zone-body{text-align:right}
+.release-summary .release-zone+.release-zone span{justify-content:flex-end}
 .release-zone span,.release-zone b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .release-zone span{display:flex;align-items:center;gap:5px;color:var(--muted);font-size:12px;font-weight:600;line-height:1.35}
 .release-zone b{font-family:var(--font-data);font-size:14px;font-weight:650;letter-spacing:-.01em}
-.release-zone-held span{color:var(--green-ink)}
 .release-bar{position:relative;display:grid;gap:3px;min-height:62px}
 .release-seg{container-type:inline-size;display:grid;align-content:center;gap:2px;min-width:0;padding:9px 11px;border-radius:2px;overflow:hidden;transition:background 200ms cubic-bezier(.22,1,.36,1),color 200ms cubic-bezier(.22,1,.36,1)}
 .release-seg:first-child{border-radius:var(--seg-radius) 2px 2px var(--seg-radius)}
@@ -331,9 +336,16 @@
 .release-seg-deposit{background:var(--navy);color:#fff}
 .release-seg-dispatch{background:var(--blue);color:#fff}
 .release-seg-delivery{background:var(--green-ink);color:#fff}
-.release-seg-holding{background:var(--green-soft);color:var(--ink);box-shadow:inset 0 0 0 1px var(--green-ink)}
-.release-seg-holding.release-seg-dispatch{background:var(--blue-soft);box-shadow:inset 0 0 0 1px var(--blue)}
-.release-seg-holding .release-seg-state{color:var(--muted)}
+.release-seg-held{background:var(--green-soft);color:var(--ink);box-shadow:inset 0 0 0 1px var(--green-ink)}
+.release-seg-held.release-seg-dispatch{background:var(--blue-soft);box-shadow:inset 0 0 0 1px var(--blue)}
+/* Contested money is not safely held, so it takes the attention tone rather than the calm one. */
+.release-seg-disputed{background:var(--amber-soft);color:var(--ink);box-shadow:inset 0 0 0 1px var(--amber-ink)}
+/* Money that went back to the buyer is neither the supplier's nor still at stake. */
+.release-seg-refunded{background:var(--surface-2);color:var(--ink);box-shadow:inset 0 0 0 1px var(--rule-strong)}
+.release-seg-refunded .release-seg-state{color:var(--muted)}
+.release-seg-disputed .release-seg-state{color:var(--amber-ink);font-weight:650}
+.release-seg-held .release-seg-state{color:var(--muted)}
+.release-zone-held span{color:var(--green-ink)}
 .release-legend{align-items:start}
 .release-leg{container-type:inline-size;display:grid;gap:2px;min-width:0;padding-top:1px}
 .release-leg strong,.release-leg small{display:none}

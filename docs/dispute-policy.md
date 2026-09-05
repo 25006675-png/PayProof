@@ -98,7 +98,7 @@ These rules apply where the agreement between the parties does not answer the qu
 
 **DP-7.2** Where a delivery is short, the shortfall is refundable at the unit price for that line in the agreed order.
 
-**DP-7.3** Where goods arrive damaged and the damage is evidenced within the inspection window in DP-2.1, the damaged quantity is treated as not delivered, and is refundable at the unit price for that line.
+**DP-7.3** Where goods arrive damaged and the damage is evidenced within the inspection window in DP-2.1, the damaged quantity is treated as not delivered, and is refundable at the unit price for that line, subject to DP-7.11.
 
 **DP-7.4** Where goods do not match the specification in the agreed order, the non-conforming quantity is treated as not delivered, and is refundable at the unit price for that line.
 
@@ -113,6 +113,8 @@ These rules apply where the agreement between the parties does not answer the qu
 **DP-7.9** Quantities and amounts must be calculated from the line items in the agreed order. No other price, rate, or currency may be introduced.
 
 **DP-7.10** Where neither the agreement nor this Policy provides a rule that answers the dispute, **no proposal is made** and the case proceeds to negotiation or escalation. An unanswerable case is not resolved by approximation.
+
+**DP-7.11** Where damage under DP-7.3 is admitted or evidenced, and the supplier evidences that the same goods were sound and adequately packed when handed to the carrier, the loss is established but its cause is not attributed to either party. The damaged quantity is **divided equally** between them. This does not affect either party's right to recover from the carrier.
 
 ## DP-8 · Automated analysis
 
@@ -160,5 +162,5 @@ These rules apply where the agreement between the parties does not answer the qu
 
 ## Version history
 
-- **1.1 — 5 September 2026.** Added confirmed milestone releases and clarified that disputes are limited to the remaining delivery balance.
+- **1.1 — 5 September 2026.** Added confirmed milestone releases, clarified that disputes are limited to the remaining delivery balance, and added DP-7.11 on damage whose cause cannot be attributed to either party.
 - **1.0 — 2 September 2026.** First published version.

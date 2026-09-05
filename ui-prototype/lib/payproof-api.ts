@@ -57,7 +57,7 @@ export type TradeOrder = {
   lineItems: TradeLineItem[];
   releasePlan?: { depositUnits: string; dispatchUnits: string; deliveryUnits: string };
   releaseRecords?: Array<{
-    stage: "deposit" | "dispatch" | "delivery"; amountUnits: string; cumulativeReleasedUnits: string; remainingUnits: string;
+    stage: "deposit" | "dispatch" | "undisputed" | "delivery"; amountUnits: string;
     transactionDigest: string; verificationStatus: "verified_on_chain" | "external_reference"; releasedAt: string; evidenceSha256?: string;
   }>;
   status: string;

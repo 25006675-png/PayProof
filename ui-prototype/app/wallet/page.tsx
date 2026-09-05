@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { AppShell, HelpHint, Notice, PageTitle } from "@/app/components/app-shell";
 import { type DemoOrder, formatOrderMoney as money } from "@/lib/demo-orders";
 import { type PaymentRequest, parsePaymentRequest, useEscrowActions } from "@/lib/escrow-actions";
-import { type ReleaseStageKey, releasedStages } from "@/app/components/release-plan";
+import { type ReleaseStageKey, releaseProgress } from "@/app/components/release-plan";
 import { explorerTransactionUrl, suiDAppKit, TESTNET_USDC_TYPE } from "@/lib/sui-dapp-kit";
 import { useWorkspace } from "@/lib/use-workspace";
 import { AnimatedAmount, LiftCard } from "@/app/components/motion";
@@ -29,9 +29,9 @@ function sumOrders(orders: DemoOrder[], pick: (order: DemoOrder) => number = (or
 function escrowMovements(orders: DemoOrder[]): Movement[] {
   const out: Movement[] = [];
   for (const order of orders) {
+    const progress = releaseProgress(order);
+    if (!progress) continue;
     const supplying = order.role === "SUPPLIER";
-    const released = releasedStages(order.status);
-    if (!released) continue;
     const plan = order.releasePlan ?? { depositValue: 0, dispatchValue: 0, deliveryValue: order.value };
     const settledAt = order.raw?.updatedAt ?? order.events.at(-1)?.at ?? order.funding?.fundedAt ?? "";
     const base = { detail: `${order.reference} with ${order.counterparty}`, currency: order.currency, state: "complete" as const, orderId: order.id };
@@ -42,19 +42,24 @@ function escrowMovements(orders: DemoOrder[]): Movement[] {
       out.push({ ...base, id: `${order.id}-escrow`, type: "out", title: "Escrow funded", amount: order.value,
         at: order.funding?.fundedAt ?? settledAt, transactionDigest: order.funding?.transactionDigest, stage: "escrow" });
     }
-    if (plan.depositValue > 0) {
-      out.push({ ...base, id: `${order.id}-deposit`, type: toSupplier, title: `Order deposit released${suffix}`, amount: plan.depositValue,
+    if (progress.deposit > 0) {
+      out.push({ ...base, id: `${order.id}-deposit`, type: toSupplier, title: `Order deposit released${suffix}`, amount: progress.deposit,
         at: order.funding?.fundedAt ?? settledAt, transactionDigest: order.funding?.transactionDigest, stage: "deposit" });
     }
-    if (released.dispatch && plan.dispatchValue > 0) {
-      out.push({ ...base, id: `${order.id}-dispatch`, type: toSupplier, title: `Dispatch payment released${suffix}`, amount: plan.dispatchValue,
+    if (progress.dispatch > 0) {
+      out.push({ ...base, id: `${order.id}-dispatch`, type: toSupplier, title: `Dispatch payment released${suffix}`, amount: progress.dispatch,
         at: order.shipment?.dispatchedAt ?? settledAt, transactionDigest: order.shipment?.transactionDigest, stage: "dispatch" });
     }
+    // A claim pays the undisputed value out immediately, well before any settlement exists.
+    const undisputed = order.raw?.undisputedRelease;
+    const atClaim = undisputed ? Math.min(progress.delivery, plan.deliveryValue) : 0;
+    if (undisputed && atClaim > 0) {
+      out.push({ ...base, id: `${order.id}-undisputed`, type: toSupplier, title: `Undisputed value released${suffix}`, amount: atClaim,
+        at: undisputed.releasedAt, transactionDigest: undisputed.transactionDigest, stage: "delivery" });
+    }
     if (!order.settlement) continue;
-    // Settlement figures are cumulative, so subtract whatever the earlier tranches already paid.
-    const early = plan.depositValue + (released.dispatch ? plan.dispatchValue : 0);
-    const finalToSupplier = Math.max(0, order.settlement.supplierValue - early);
-    if (finalToSupplier > 0) {
+    const finalToSupplier = Math.max(0, progress.delivery - atClaim);
+    if (finalToSupplier > 0.0001) {
       out.push({ ...base, id: `${order.id}-delivery`, type: toSupplier, title: `Delivery balance released${suffix}`, amount: finalToSupplier,
         at: settledAt, transactionDigest: order.settlement.transactionDigest, stage: "delivery" });
     }

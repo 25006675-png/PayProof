@@ -38,3 +38,6 @@ EXPECTED VALUES
 Order total: 30.00 USDC
 Undisputed value: 26.40 USDC
 Disputed value: 3.60 USDC
+Expected settlement (DP-7.11, cause not attributed): 1.80 USDC to buyer, 1.80 USDC to supplier
+Buyer final wallet: 11.80 USDC
+Supplier total received: 28.20 USDC

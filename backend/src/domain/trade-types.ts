@@ -30,11 +30,11 @@ export interface TradeReleasePlan {
   deliveryUnits: string;
 }
 
+/** One payout that actually happened. Running totals are derived when displayed, never stored,
+ *  so a record can only ever state the facts of its own transaction. */
 export interface TradeReleaseRecord {
-  stage: "deposit" | "dispatch" | "delivery";
+  stage: "deposit" | "dispatch" | "undisputed" | "delivery";
   amountUnits: string;
-  cumulativeReleasedUnits: string;
-  remainingUnits: string;
   transactionDigest: string;
   verificationStatus: "verified_on_chain" | "external_reference";
   releasedAt: string;

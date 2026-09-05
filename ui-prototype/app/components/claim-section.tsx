@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { ConsentDialog, FileField, HelpHint, Notice } from "@/app/components/app-shell";
 import { DocumentLink, prepareEvidence } from "@/app/components/order-documents";
 import { MediationReportView } from "@/app/components/mediation-report";
-import { GrowBar } from "@/app/components/motion";
+import { ReleasePlanBar, releaseProgress } from "@/app/components/release-plan";
 import { type ClaimProposal, type ClaimView, type DemoOrder, formatDateTime, formatOrderMoney as money } from "@/lib/demo-orders";
 import { acceptClaimProposal, enforceClaimDeadline, loadClaim, proposeClaimSplit, rejectClaimProposal, requestMediation, respondToClaim, type EvidenceFileInput } from "@/lib/dispute-actions";
 import { useEscrowActions } from "@/lib/escrow-actions";
@@ -59,8 +59,8 @@ export function ClaimSection({ order, claim, company, onOrderChange, onClaimChan
   const countdown = useCountdown(claim.deadline);
   const open = claim.proposals.find((proposal) => proposal.status === "open");
   const stageIndex = claim.status === "arbitration_pending" ? 1 : STAGES.findIndex((stage) => stage.id === claim.status);
-  const released = order.inspection?.acceptedValue ?? claim.totalValue - claim.disputedValue;
-  const pct = (value: number) => `${Math.max(0, Math.min(100, (value / claim.totalValue) * 100)).toFixed(1)}%`;
+  // open_dispute pays this out in the claim transaction itself; only the disputed amount stays.
+  const undisputedPaid = claim.totalValue - claim.disputedValue;
   const myAccepted = open?.acceptances.includes(mySide) ?? false;
   const iProposed = open?.source === "human" && open.side === mySide;
 
@@ -169,17 +169,14 @@ export function ClaimSection({ order, claim, company, onOrderChange, onClaimChan
         {claim.status === "arbitration_pending" && <li className="current claim-stage-branch"><span className="claim-stage-dot" aria-hidden="true"><Gavel size={11} /></span>With arbitrator</li>}
       </ol>
 
-      <div className="settlement-bar" role="img" aria-label={`${money(released)} ${order.currency} released to the supplier, ${money(claim.disputedValue)} ${order.currency} disputed, of ${money(claim.totalValue)} ${order.currency}`}>
-        <div className="settlement-bar-track">
-          <GrowBar className="settlement-bar-released" width={pct(released)} />
-          <GrowBar className="settlement-bar-disputed" width={pct(claim.disputedValue)} />
+      {order.releasePlan && (
+        <div className="claim-money">
+          <ReleasePlanBar total={order.value} currency={order.currency}
+            values={{ deposit: order.releasePlan.depositValue, dispatch: order.releasePlan.dispatchValue, delivery: order.releasePlan.deliveryValue }}
+            progress={releaseProgress(order)} />
+          <p className="claim-money-ask">The buyer asks <strong>{money(claim.requestedValue)} {order.currency}</strong> back of the {money(claim.disputedValue)} {order.currency} in dispute. Everything else is already paid out.</p>
         </div>
-        <div className="settlement-bar-legend">
-          <span><i className="legend-released" />Released to supplier<strong>{money(released)} {order.currency}</strong>{claim.undisputedReleased ? <small>Paid out</small> : <small>Releasable now</small>}</span>
-          <span><i className="legend-disputed" />In dispute<strong>{money(claim.disputedValue)} {order.currency}</strong><small>Buyer asks {money(claim.requestedValue)} {order.currency} back</small></span>
-          <span><i className="legend-total" />Order value<strong>{money(claim.totalValue)} {order.currency}</strong></span>
-        </div>
-      </div>
+      )}
 
       {notice && <Notice tone="success" onDismiss={() => setNotice("")}>{notice}</Notice>}
       {error && <Notice tone="error" onDismiss={() => setError("")}>{error}</Notice>}
@@ -324,10 +321,10 @@ export function ClaimSection({ order, claim, company, onOrderChange, onClaimChan
             </div>
           )}
 
-          {mySide === "supplier" && released > 0 && (
+          {mySide === "supplier" && undisputedPaid > 0 && (
             <div className="claim-actions claim-actions-quiet">
               <strong>Accepted value</strong>
-              <p>{money(released)} {order.currency} was paid to your wallet by the claim transaction itself. Only the disputed amount is still in escrow.</p>
+              <p>{money(undisputedPaid)} {order.currency} was paid to your wallet by the claim transaction itself. Only the disputed amount is still in escrow.</p>
             </div>
           )}
         </aside>)}

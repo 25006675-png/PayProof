@@ -8,12 +8,12 @@ This script presents one complete 30 USDC purchase between:
 - **Supplier:** FreshSource Foods Sdn. Bhd.
 - **Purchase order:** PP-DEMO-0905
 
-The buyer starts with **40.00 USDC**, funds **30.00 USDC**, and has **10.00 USDC** left in the wallet. Three strawberry cartons worth **3.60 USDC** are disputed. In the latest completed live case, the AI mediator proposed returning the full **3.60 USDC** disputed amount to the buyer. Both parties accepted and the settlement was verified on-chain.
+The buyer starts with **40.00 USDC**, funds **30.00 USDC**, and has **10.00 USDC** left in the wallet. Three strawberry cartons worth **3.60 USDC** are disputed. Both companies anchor evidence on Sui: the supplier's dispatch photograph and the buyer's receiving photograph. Under DP-7.11 the loss is proved but its cause is not attributed to either company, so the expected proposal divides the **3.60 USDC** equally, **1.80 USDC** each. Both parties accept and the settlement is verified on-chain.
 
 Latest case final position:
 
-- Buyer wallet: **13.60 USDC**
-- Supplier receives: **26.40 USDC** in total
+- Buyer wallet: **11.80 USDC**
+- Supplier receives: **28.20 USDC** in total
 - Escrow remaining: **0.00 USDC**
 
 If a newly generated live mediation recommends a different split, use the actual result on screen. The buyer's final wallet is always:
@@ -267,9 +267,9 @@ When the result appears, first show the proposed numbers. Then open the **AI ana
 
 Continue:
 
-> Under policy clause DP-7.3, damaged goods evidenced within the inspection window are treated as not delivered and are refundable at the purchase-order unit price. The mediator therefore proposes returning the full 3.60 USDC disputed amount to the buyer. The supplier keeps the 26.40 USDC already released for every accepted item.
+> Clause DP-7.3 makes damaged goods refundable at the purchase-order unit price, but it is subject to DP-7.11. Because the supplier evidenced that these cartons were sound and stretch-wrapped when DHL collected them, the loss is established while its cause is not attributed to either company. DP-7.11 therefore divides the 3.60 USDC equally: 1.80 USDC back to the buyer, 1.80 USDC to the supplier, on top of the 26.40 USDC already released for every accepted item.
 
-> The analysis marks the evidence as strong and the policy relevance as direct. It also separates this buyer-supplier settlement from any claim the supplier may later make against the carrier.
+> This is the point of anchoring evidence. Both photographs changed the outcome: the buyer's proved the damage, the supplier's proved sound handover. Neither company absorbs a loss it cannot be shown to have caused, and either remains free to recover from the carrier.
 
 If the live proposal differs, say:
 

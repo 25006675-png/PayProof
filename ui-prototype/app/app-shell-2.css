@@ -98,18 +98,9 @@
 .done .claim-stage-dot{border-color:var(--blue);background:var(--blue);color:#fff}
 .current .claim-stage-dot{border-color:var(--navy);color:var(--navy);box-shadow:0 0 0 3px rgba(34,104,221,.15)}
 .claim-stage-branch .claim-stage-dot{border-color:var(--red-ink);color:var(--red-ink)}
-.settlement-bar{display:grid;gap:10px;margin-bottom:16px}
-.settlement-bar-track{height:14px;display:flex;overflow:hidden;border-radius:999px;background:#e6ebf2}
-.settlement-bar-released{background:var(--green-ink);transition:width .5s cubic-bezier(.22,1,.36,1)}
-.settlement-bar-disputed{background:var(--red-ink);transition:width .5s cubic-bezier(.22,1,.36,1)}
-.settlement-bar-legend{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-.settlement-bar-legend>span{display:grid;grid-template-columns:auto 1fr;grid-template-rows:auto auto auto;column-gap:7px;align-items:center;font-size:12.5px;font-weight:650;color:var(--ink-2)}
-.settlement-bar-legend i{grid-row:1/4;width:10px;height:10px;border-radius:3px;align-self:start;margin-top:4px}
-.legend-released{background:var(--green-ink)}
-.legend-disputed{background:var(--red-ink)}
-.legend-total{background:#c9d2de}
-.settlement-bar-legend strong{font-family:var(--font-data);font-size:15px;font-weight:600;color:var(--ink)}
-.settlement-bar-legend small{font-weight:500}
+.claim-money{display:grid;gap:12px;margin-bottom:16px}
+.claim-money-ask{margin:0;padding-top:12px;border-top:1px solid var(--rule);color:var(--ink-2);font-size:13px;line-height:1.5}
+.claim-money-ask strong{font-family:var(--font-data);font-weight:650}
 .claim-grid{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:20px;align-items:start}
 .claim-main{display:grid;gap:16px;min-width:0}
 .claim-statement{padding:12px 14px;border:1px solid var(--rule);border-radius:8px;background:var(--surface-2)}
@@ -179,11 +170,9 @@
 @media(prefers-reduced-motion:reduce){
   .reveal,.row-reveal,.order-created-mark{animation:none}
   .skeleton span{animation:none}
-  .settlement-bar-released,.settlement-bar-disputed{transition:none}
 }
 @media(max-width:1050px){
   .claim-grid{grid-template-columns:1fr}
-  .settlement-bar-legend{grid-template-columns:1fr}
 }
 @media(max-width:760px){
   .choice-grid{grid-template-columns:1fr}

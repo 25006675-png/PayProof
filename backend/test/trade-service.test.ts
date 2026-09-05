@@ -355,6 +355,8 @@ describe("trade lifecycle API", () => {
     const opened = await trades.openDispute(order.id, buyer, { disputeTransactionDigest: "dispute-claim", disputedUnits: "30000", requestedBuyerUnits: "20000", claim: "Short delivery", evidenceStatement: "Buyer evidence", negotiationDeadline: "2026-09-03T00:00:00.000Z" });
     expect(opened.order.undisputedRelease).toMatchObject({ transactionDigest: "dispute-claim", verificationStatus: "external_reference" });
     expect(opened.dispute.undisputedReleasedUnits).toBe("70000");
+    // The claim transaction paid the undisputed value out, so the trail must carry it.
+    expect(opened.order.releaseRecords?.at(-1)).toMatchObject({ stage: "undisputed", amountUnits: "70000", transactionDigest: "dispute-claim" });
   });
 
   it("settles by deadline only for the entitled party once the escrow deadline has passed", async () => {
@@ -394,6 +396,6 @@ describe("trade lifecycle API", () => {
     const claimed = await trades.settleByDeadline(uninspected.id, supplier, { kind: "claim_uninspected", transactionDigest: "claim-2" });
     expect(claimed.settlement).toMatchObject({ buyerUnits: "0", supplierUnits: "5000", source: "claim_uninspected" });
     // The supplier was actually paid the delivery balance, so the release trail must show it.
-    expect(claimed.releaseRecords?.at(-1)).toMatchObject({ stage: "delivery", amountUnits: "5000", cumulativeReleasedUnits: "5000", remainingUnits: "0", transactionDigest: "claim-2" });
+    expect(claimed.releaseRecords?.at(-1)).toMatchObject({ stage: "delivery", amountUnits: "5000", transactionDigest: "claim-2" });
   });
 });
