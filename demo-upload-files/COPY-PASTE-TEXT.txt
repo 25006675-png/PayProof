@@ -1,0 +1,40 @@
+PROOFPAY LIVE DEMO - COPY AND PASTE
+===================================
+
+ORDER
+-----
+Buyer company: Choong Trading Sdn. Bhd.
+Supplier company: FreshSource Foods Sdn. Bhd.
+Supplier email: payproof94@gmail.com
+PO reference: PP-DEMO-0905
+Expected delivery: 12 September 2026
+Delivery location: Receiving Bay 2, Shah Alam Distribution Centre
+
+SHIPPING
+--------
+Carrier: DHL Express
+Tracking number: DHL-PP-0905-MY
+
+DELIVERY
+--------
+Delivery order number: DO-FS-0905
+
+BUYER INSPECTION
+----------------
+Strawberries accepted: 7 cartons
+Strawberries damaged: 3 cartons
+Blueberries accepted: 6 cartons
+Avocados accepted: 6 crates
+
+Buyer statement:
+Three strawberry cartons arrived with crushed corners and leaking punnets. The exception was recorded before the pallet left Receiving Bay 2. The blueberries and avocados were accepted in full. We request 3.60 USDC back for the three unsaleable strawberry cartons.
+
+SUPPLIER RESPONSE
+-----------------
+Our dispatch photograph shows the strawberry cartons intact, dry, and stretch-wrapped before carrier collection. We accept that damage was present at delivery, but the condition appears consistent with handling during carriage. We dispute full responsibility and propose sharing the 3.60 USDC loss.
+
+EXPECTED VALUES
+---------------
+Order total: 30.00 USDC
+Undisputed value: 26.40 USDC
+Disputed value: 3.60 USDC
