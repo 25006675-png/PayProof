@@ -102,6 +102,13 @@ describe("Sui settlement verifier", () => {
     });
   });
 
+  it("resolves the receipt from the settlement event when the client could not read it back", async () => {
+    const fixture = validFixture();
+    const verifier = new GrpcSuiSettlementVerifier({ packageId: PACKAGE, client: fixture.reader });
+    const { receiptObjectId, ...withoutReceipt } = fixture.proof;
+    await expect(verifier.verify(fixture.dispute, withoutReceipt)).resolves.toMatchObject({ receiptObjectId: RECEIPT });
+  });
+
   it("rejects a proof whose escrow is not bound to the dispute", async () => {
     const fixture = validFixture();
     const verifier = new GrpcSuiSettlementVerifier({ packageId: PACKAGE, client: fixture.reader });

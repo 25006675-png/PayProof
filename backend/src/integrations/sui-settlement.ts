@@ -14,7 +14,7 @@ export interface SettlementExecutionProof {
   transactionDigest: string;
   packageId: string;
   escrowObjectId: string;
-  receiptObjectId: string;
+  receiptObjectId?: string;
 }
 
 /**
@@ -227,7 +227,9 @@ export class GrpcSuiSettlementVerifier implements SuiSettlementVerifier {
     const bindingPackageId = objectId(binding.packageId, "onchainEscrow.packageId");
     const escrowObjectId = objectId(proof.escrowObjectId, "escrowObjectId");
     const bindingEscrowObjectId = objectId(binding.escrowObjectId, "onchainEscrow.escrowObjectId");
-    const receiptObjectId = objectId(proof.receiptObjectId, "receiptObjectId");
+    // The client cannot always read the receipt back before the fullnode indexes it, so a proof
+    // may omit it. The settlement event names the receipt, and every check below still applies.
+    const claimedReceiptObjectId = proof.receiptObjectId ? objectId(proof.receiptObjectId, "receiptObjectId") : undefined;
     const settlementDigest = digest(proof.transactionDigest, "transactionDigest");
     const fundingDigest = digest(binding.fundingTransactionDigest, "fundingTransactionDigest");
     const disputeDigest = digest(binding.disputeTransactionDigest, "disputeTransactionDigest");
@@ -284,6 +286,7 @@ export class GrpcSuiSettlementVerifier implements SuiSettlementVerifier {
     const settlementTx = await this.readTransaction(settlementDigest);
     const settlementEvent = findEvent(settlementTx, settlementExecutedType, "SettlementExecuted", packageId);
     const settlementData = eventData(settlementEvent, "SettlementExecuted");
+    const receiptObjectId = claimedReceiptObjectId ?? objectId(String(settlementData.receipt_id), "SettlementExecuted.receipt_id");
     const buyerRefund = units(settlementData.buyer_refund, "SettlementExecuted.buyer_refund");
     const supplierRelease = units(settlementData.supplier_release, "SettlementExecuted.supplier_release");
     const disputedUnits = units(dispute.disputedUnits, "disputedUnits");

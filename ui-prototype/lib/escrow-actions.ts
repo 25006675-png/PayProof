@@ -358,9 +358,14 @@ export function useEscrowActions() {
     const tx = new Transaction();
     tx.moveCall({ target: `${packageOf(order)}::escrow::execute_settlement`, typeArguments: [order.assetType], arguments: [tx.object(order.funding.escrowObjectId), tx.object.clock()] });
     const { digest, indexed } = await signed(tx, "The settlement transaction failed.");
-    const receipt = receiptIdOf(indexed);
-    if (!receipt) throw new Error("Settlement executed, but its receipt event was not indexed yet. Refresh and try again.");
-    return confirmClaimExecution(disputeId, { transactionDigest: digest, packageId: packageOf(order), escrowObjectId: order.funding.escrowObjectId, receiptObjectId: receipt });
+    // execute_settlement consumes the escrow, so this transaction can never be replayed. Record it
+    // even when the receipt has not been indexed yet: the backend reads it from the settlement event.
+    try {
+      return await confirmClaimExecution(disputeId, { transactionDigest: digest, packageId: packageOf(order), escrowObjectId: order.funding.escrowObjectId, receiptObjectId: receiptIdOf(indexed) });
+    } catch (cause) {
+      const reason = cause instanceof Error ? cause.message : String(cause);
+      throw new Error(`The settlement completed on Sui in transaction ${digest}, but recording it here failed: ${reason}. Do not run the settlement again, the escrow is already closed. Keep this reference.`);
+    }
   }
 
   /** Pays a merchant's request directly, outside any escrow, and keeps an on-chain receipt bound to

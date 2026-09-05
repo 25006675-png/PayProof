@@ -331,7 +331,7 @@ export function createApp(
     }
     const proof = z.object({
       transactionDigest: z.string().min(1).max(256), packageId: z.string().min(1).max(256),
-      escrowObjectId: z.string().min(1).max(256), receiptObjectId: z.string().min(1).max(256),
+      escrowObjectId: z.string().min(1).max(256), receiptObjectId: z.string().min(1).max(256).optional(),
     }).parse(await c.req.json());
     const verified = await settlementVerifier.verify(dispute, proof);
     const result = await service.confirmSettlement(dispute.id, verified);

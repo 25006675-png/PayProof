@@ -139,7 +139,7 @@ export async function enforceClaimDeadline(disputeId: string): Promise<ClaimView
   return disputeToClaim(await apiRequest<DisputeRecord>(`/v1/disputes/${encodeURIComponent(disputeId)}/enforce-deadline`, { method: "POST" }));
 }
 
-export async function confirmClaimExecution(disputeId: string, proof: { transactionDigest: string; packageId: string; escrowObjectId: string; receiptObjectId: string }): Promise<ClaimView> {
+export async function confirmClaimExecution(disputeId: string, proof: { transactionDigest: string; packageId: string; escrowObjectId: string; receiptObjectId?: string }): Promise<ClaimView> {
   return disputeToClaim(await apiRequest<DisputeRecord>(`/v1/disputes/${encodeURIComponent(disputeId)}/settlement-execution`, { method: "POST", body: JSON.stringify(proof) }));
 }
 
